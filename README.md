@@ -12,7 +12,14 @@ minutes, to one decimal place (2.5 is two and a half minutes), and use
 **Start**, **Stop** (a pause: Start resumes) and **Reset** (pressed while
 running, it stops the timer too). Time Remaining is the Time Limit minus
 Elapsed Time and goes negative, in red, once the limit is passed; with a blank,
-0 or negative limit it stays at zero.
+0 or negative limit it stays at zero. The slider on the right of each timer
+sets its size, from a quarter to double, on every viewer's panel and pop-out
+as well as the host's.
+
+**H:MM:SS or MMM.M**: the switch under the timers shows them as hours, minutes
+and seconds, or as minutes to a tenth ("12.5"). Every panel and every pop-out
+has its own switch. A panel starts at the host's choice when it opens, and
+goes back to it whenever a host connects; a pop-out starts at its panel's.
 
 **A viewer**: type the session's ID and press **Connect to Session**. If the
 host has not created it yet, the page waits ("Please wait, connection
@@ -28,10 +35,14 @@ running as if nothing happened. After about 10 seconds every viewer is offered
 **Assume Host Role?** (Yes or No). The offer stays up until a host connects,
 even after a No.
 
-**Coming back**: the browser remembers your last session in a cookie. A reload,
-or the window opened again, reconnects you without typing anything, as host
-if you were the host (unless someone else has taken the role meanwhile).
-**Leave Session** forgets it.
+**Coming back**: a reload takes each window back to its own session, without
+typing anything, as host if it was the host (unless someone else has taken the
+role meanwhile). A window opened again goes back by itself when there is no
+doubt which session it means: the one session it would host, or the one
+session of yours still running and not open in another window of the browser.
+With several, it offers a **Rejoin** button for each. One browser can host
+several sessions, view several, or both, each in a window of its own.
+**Leave Session** forgets the session.
 
 ## Its own window, kept on top
 
