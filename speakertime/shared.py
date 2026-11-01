@@ -4,7 +4,9 @@ Terry (2026-10-30): reuse ratesplot's code where it fits; a library shared by
 his programs is planned, but deferred until ratesplot has been fleshed out.
 Until it exists, these are copies, each naming where it came from (ratesplot
 at commit d2f9e6e, 2026-10-30), so the move to the library is a swap of the
-import. Change them only together with the original, or not at all: a fix
+import. (The cookie reader copied here at first became the page's own on
+2026-11-01, ``web._READER_JS``, when it took on the tab's note and the
+browser's id; it keeps ratesplot's method.) Change them only together with the original, or not at all: a fix
 made here alone would be lost at that swap.
 """
 
@@ -51,33 +53,3 @@ def version_text() -> str:
     (ratesplot.frontend.version_text)
     """
     return f"v{__version__}, build: {_STARTED_COMMIT}" if _STARTED_COMMIT else f"v{__version__}"
-
-
-# A page's cookies, read back through the page's own script (ratesplot.web
-# _READER_JS, batch 24.6), generalized to several cookies. Not through
-# st.context.cookies: on Streamlit Community Cloud the proxy filters almost
-# every cookie from the app's connection, and Streamlit's staff say
-# st.context.cookies cannot be used there (ratesplot 6.10 wrote its cookie
-# live and never saw it, 2026-10-27). The script sends the raw values once,
-# by name ("" for a cookie not set, or where the browser refuses cookies to
-# scripts); the page keeps them from the element's callback and starts from
-# them on the run that follows. One round trip; nothing else is laid out
-# before the answer. It runs in the page (a components v2 element is not a
-# frame), so it reads the app's own cookies.
-COOKIE_READER_JS = """
-export default function (component) {
-  const { data, setTriggerValue } = component;
-  const values = {};
-  for (const name of data.names) {
-    let value = "";
-    try {
-      const kept = document.cookie.split("; ").find((pair) => pair.startsWith(name + "="));
-      if (kept !== undefined) value = kept.slice(name.length + 1);
-    } catch (error) {
-      value = "";
-    }
-    values[name] = value;
-  }
-  setTriggerValue("cookies", values);
-}
-"""

@@ -13,9 +13,12 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from speakertime import ids  # noqa: E402
-from speakertime.sessions import EXPIRE_AFTER_S, HOST, HOST_GRACE_S, VIEWER, Refused, Registry  # noqa: E402
+from speakertime.sessions import (  # noqa: E402
+    EXPIRE_AFTER_S, HOST, HOST_GRACE_S, SIZE_DEFAULT, SIZE_MAX, SIZE_MIN, VIEWER, Refused, Registry,
+)
 from speakertime.timer import (  # noqa: E402
-    Timer, clock_text, elapsed_shown, limit_minutes, limit_seconds, remaining_shown,
+    CLOCK, MINUTES, Timer, clock_text, elapsed_shown, elapsed_tenths, limit_minutes, limit_seconds, minutes_text,
+    remaining_shown, remaining_tenths,
 )
 
 FAILURES: list[str] = []
@@ -62,6 +65,19 @@ def timer_checks() -> None:
     for seconds, text in [(0, "0:00"), (5, "0:05"), (65, "1:05"), (600, "10:00"), (3723, "1:02:03"),
                           (-1, "−0:01"), (-75, "−1:15"), (-3600, "−1:00:00")]:
         check(f"clock_text({seconds})", clock_text(seconds), text)
+
+    # MINUTES: tenths of a minute, a tenth once it has passed; Remaining the limit's tenths minus Elapsed's, adding up to it.
+    for elapsed, tenths in [(0.0, 0), (5.99, 0), (6.0, 1), (59.9, 9), (60.0, 10), (754.0, 125), (7505.0, 1250)]:
+        check(f"elapsed_tenths({elapsed})", elapsed_tenths(elapsed), tenths)
+    check("remaining_tenths(5, 12.5)", remaining_tenths(5.0, 12.5), 125)
+    check("remaining_tenths(6, 12.5)", remaining_tenths(6.0, 12.5), 124)
+    check("remaining_tenths(756, 12.5)", remaining_tenths(756.0, 12.5), -1)
+    check("remaining_tenths(100, None)", remaining_tenths(100.0, None), 0)
+    check("remaining_tenths(100, -1)", remaining_tenths(100.0, -1.0), 0)
+    for elapsed in (0.0, 7.0, 359.0, 761.5):
+        check(f"tenths add up to the limit at {elapsed}", elapsed_tenths(elapsed) + remaining_tenths(elapsed, 12.5), 125)
+    for tenths, text in [(0, "0.0"), (1, "0.1"), (125, "12.5"), (1250, "125.0"), (-1, "\u22120.1"), (-25, "\u22122.5")]:
+        check(f"minutes_text({tenths})", minutes_text(tenths), text)
 
     # Start, Stop (a pause), Start (a resume), Reset; Reset while running is Stop then Reset.
     t = Timer()
@@ -216,10 +232,87 @@ def session_checks() -> None:
     check("blind: the token's holder hosts after the grace", blind.check_in("X", "P2", tok).role, HOST)
 
 
+def display_checks() -> None:
+    """The host's sizes, the host's way of showing the times and when pages take it, and a browser's own pages (2026-11-01)."""
+    clock = Clock()
+    connected: set[str] = set()
+    reg = Registry(clock=clock, connected=lambda page: page in connected)
+
+    # Sizes: the host's alone, taken to the step and kept within the bounds; each change raises the version.
+    connected.update({"H", "V"})
+    _, token_h, _ = reg.create("SIZES", "H", "browser-h")
+    reg.join("SIZES", "V", None, "browser-v")
+    check("default sizes", reg.shown("SIZES").sizes, {"elapsed": SIZE_DEFAULT, "remaining": SIZE_DEFAULT})
+    version = reg.shown("SIZES").version
+    reg.set_size("SIZES", "H", "elapsed", 52)
+    check("size to the step", reg.shown("SIZES").sizes["elapsed"], 50)
+    check("a size raises the version", reg.shown("SIZES").version, version + 1)
+    reg.set_size("SIZES", "H", "remaining", 9999)
+    reg.set_size("SIZES", "H", "elapsed", -3)
+    check("sizes kept within bounds", reg.shown("SIZES").sizes, {"elapsed": SIZE_MIN, "remaining": SIZE_MAX})
+    check("sizes reach the viewers", reg.check_in("SIZES", "V", None).shown.for_script()["sizes"], {"elapsed": SIZE_MIN, "remaining": SIZE_MAX})
+    for bad in [("limit", 50), ("elapsed", "big"), ("elapsed", float("nan")), ("elapsed", None)]:
+        try:
+            reg.set_size("SIZES", "H", *bad)
+            check(f"bad size {bad!r} refused", "taken", "refused")
+        except ValueError:
+            check(f"bad size {bad!r} refused", "refused", "refused")
+    try:
+        reg.set_size("SIZES", "V", "elapsed", 100)
+        check("a viewer cannot size", "sized", "refused")
+    except Refused:
+        check("a viewer cannot size", "refused", "refused")
+
+    # The host's way of showing the times: the default as a page opens; again for everyone when a host connects.
+    check("new session's mode", reg.shown("SIZES").host_mode, CLOCK)
+    reg.set_host_mode("SIZES", "H", MINUTES)
+    reg.set_host_mode("SIZES", "V", CLOCK)  # a viewer's choice is its own: ignored here
+    shown = reg.shown("SIZES")
+    check("host's mode kept, epoch unchanged", (shown.host_mode, shown.host_epoch), (MINUTES, 1))
+    connected.add("V2")
+    check("a page opening is given the host's mode", reg.join("SIZES", "V2", None).shown.host_mode, MINUTES)
+    # The host reloads (a new page with the token, its panel at CLOCK by then): a host connects, the epoch rises.
+    connected.discard("H")
+    connected.add("H2")
+    checked = reg.join("SIZES", "H2", token_h, "browser-h", CLOCK)
+    check("reloaded host: host, its mode the host's", (checked.role, checked.shown.host_mode, checked.shown.host_epoch), (HOST, CLOCK, 2))
+    # A page that has shown no session yet (mode None) keeps the session's host mode when it becomes host.
+    reg.set_host_mode("SIZES", "H2", MINUTES)
+    reg.leave("SIZES", "H2")
+    connected.discard("H2")
+    reg.assume_host("SIZES", "V", None)
+    shown = reg.shown("SIZES")
+    check("assumed with no mode: the host's mode stays", (shown.host_mode, shown.host_epoch), (MINUTES, 3))
+    reg.leave("SIZES", "V")
+    reg.assume_host("SIZES", "V2", CLOCK)
+    check("assumed with a mode: it becomes the host's", (reg.shown("SIZES").host_mode, reg.shown("SIZES").host_epoch), (CLOCK, 4))
+    check("set_host_mode ignores a mode not in MODES", reg.set_host_mode("SIZES", "V2", "nonsense") or reg.shown("SIZES").host_mode, CLOCK)
+
+    # A browser's own pages: what a new window of that browser could go back to.
+    clock2 = Clock()
+    on: set[str] = set()
+    reg2 = Registry(clock=clock2, connected=lambda page: page in on)
+    on.update({"W1", "W2"})
+    _, tok_a, _ = reg2.create("ALPHA", "W1", "me")
+    _, tok_b, _ = reg2.create("BRAVO", "W2", "me")
+    on.add("X")
+    _, tok_c, _ = reg2.create("CHARLIE", "X", "someone-else")
+    tokens = {"ALPHA": tok_a, "BRAVO": tok_b}
+    recent = ["BRAVO", "ALPHA", "CHARLIE", "GONE"]  # GONE is not running: never a candidate
+    check("both open in this browser: none", reg2.candidates(recent, "W3", "me", tokens), [("CHARLIE", False)])
+    check("another browser sees them all", reg2.candidates(recent, "Y", "other", {}), [("BRAVO", False), ("ALPHA", False), ("CHARLIE", False)])
+    on.discard("W1")  # ALPHA's window closed: its host's page gone
+    check("ALPHA's window closed: it would host ALPHA", reg2.candidates(recent, "W3", "me", tokens), [("ALPHA", True), ("CHARLIE", False)])
+    on.discard("W2")
+    check("both closed: both to host", reg2.candidates(recent, "W3", "me", tokens), [("BRAVO", True), ("ALPHA", True), ("CHARLIE", False)])
+    check("no browser id: nothing is open here", [sid for sid, _ in reg2.candidates(["CHARLIE"], "W3", None, {})], ["CHARLIE"])
+
+
 def main() -> int:
     timer_checks()
     id_checks()
     session_checks()
+    display_checks()
     for failure in FAILURES:
         print("FAIL", failure)
     print(f"{COUNT - len(FAILURES)} of {COUNT} checks passed")
