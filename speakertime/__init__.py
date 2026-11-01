@@ -1,4 +1,4 @@
-"""SpeakerTimer: a talk's Elapsed Time and Time Remaining, shared between a host and any number of viewers.
+"""SpeakerTime: a talk's Elapsed Time and Time Remaining, shared between a host and any number of viewers.
 
 One person (the host, usually the session's chair) creates a session and runs
 its timer; anyone who knows the session's ID connects and sees the same two

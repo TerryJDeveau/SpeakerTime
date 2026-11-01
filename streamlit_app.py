@@ -1,8 +1,8 @@
 """The web page's entry point: ``streamlit run streamlit_app.py`` (also what Streamlit Community Cloud runs).
 
-The page itself is ``speakertimer.web``.
+The page itself is ``speakertime.web``.
 """
 
-from speakertimer.web import main
+from speakertime.web import main
 
 main()

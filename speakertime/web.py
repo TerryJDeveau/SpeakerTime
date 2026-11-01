@@ -27,8 +27,8 @@ Picture-in-Picture, in Chrome and Edge on a computer (version 116 on).
 
 What the browser keeps (two cookies)
 ------------------------------------
-``speakertimer_last`` holds the last session connected to, and
-``speakertimer_hosts`` the host's token of each session hosted from this
+``speakertime_last`` holds the last session connected to, and
+``speakertime_hosts`` the host's token of each session hosted from this
 browser (the last ``_HOSTS_KEPT``). A page opened again (a reload, the window
 closed and opened) reconnects to its last session by itself, as its host if it
 holds the session's token and no other page hosts it (Terry, 2026-10-30, for
@@ -51,7 +51,7 @@ from .sessions import HOST, REGISTRY, VIEWER, Checked, Refused, Shown
 from .shared import COOKIE_READER_JS, version_text
 from .timer import limit_minutes
 
-PAGE_TITLE = "SpeakerTimer"
+PAGE_TITLE = "SpeakerTime"
 
 CHECK_IN_S = 1.0
 """How often a page checks in: the most a viewer's timers lag the host's Start or Stop, and how soon a session waited for is joined."""
@@ -62,8 +62,8 @@ _COOKIE_DAYS = 7
 _HOSTS_KEPT = 10
 """The most host tokens the browser keeps, the most recent: a token of a session long gone only takes room."""
 
-LAST_COOKIE = "speakertimer_last"
-HOSTS_COOKIE = "speakertimer_hosts"
+LAST_COOKIE = "speakertime_last"
+HOSTS_COOKIE = "speakertime_hosts"
 
 # The screens.
 START = "start"
@@ -139,7 +139,7 @@ const ROWS_HTML = '<div class="row"><span class="label">Elapsed Time</span><span
 
 // The page's one note of the timer, kept on the window so that every element
 // that is rebuilt (each of the page's runs) finds the one before's.
-const hub = () => (window.speakerTimer ??= {{
+const hub = () => (window.speakerTime ??= {{
   base: null,      // the last reading taken: {{sid, elapsed, running, limit, version, at}}, at from performance.now()
   lastSync: 0,     // when a check-in last arrived
   lastKick: 0,     // when the pop-out last asked for one
@@ -192,7 +192,7 @@ const hub = () => (window.speakerTimer ??= {{
   // The pop-out: drawn and timed from its own window, which stays on top.
   openPip(win) {{
     const h = this;
-    win.document.title = "SpeakerTimer";
+    win.document.title = "SpeakerTime";
     const style = win.document.createElement("style");
     style.textContent = PIP_CSS;
     win.document.head.appendChild(style);
@@ -330,7 +330,7 @@ const KEPT = {_HOSTS_KEPT};
 
 export default function (component) {{
   const {{ data }} = component;
-  const done = (window.speakerTimerCookies ??= {{ n: 0 }});
+  const done = (window.speakerTimeCookies ??= {{ n: 0 }});
   if (data.n === 0 || data.n === done.n) return;
   done.n = data.n;
   try {{
@@ -369,13 +369,13 @@ export default function (component) {{
 _PAGE_STYLE = """
 <style>
 [data-testid="stMainBlockContainer"] { padding-top: 3.2rem; padding-bottom: 2rem; }
-.speakertimer-wait { display: flex; align-items: center; gap: 0.7em; font-size: 1.25rem; margin: 0.5rem 0 0.25rem; }
-.speakertimer-spinner {
+.speakertime-wait { display: flex; align-items: center; gap: 0.7em; font-size: 1.25rem; margin: 0.5rem 0 0.25rem; }
+.speakertime-spinner {
   width: 1.3em; height: 1.3em; flex: none; border-radius: 50%;
   border: 0.22em solid rgba(128, 128, 128, 0.3); border-top-color: #e2483d;
-  animation: speakertimer-spin 0.9s linear infinite;
+  animation: speakertime-spin 0.9s linear infinite;
 }
-@keyframes speakertimer-spin { to { transform: rotate(360deg); } }
+@keyframes speakertime-spin { to { transform: rotate(360deg); } }
 </style>
 """
 
@@ -612,7 +612,7 @@ def _start_screen() -> None:
 
 def _pending_screen(sid: str) -> None:
     st.markdown(
-        '<div class="speakertimer-wait"><span class="speakertimer-spinner"></span>'
+        '<div class="speakertime-wait"><span class="speakertime-spinner"></span>'
         "<span>Please wait, connection pending</span></div>",
         unsafe_allow_html=True,
     )
@@ -637,7 +637,7 @@ def _session_screen(sid: str, checked: Checked) -> None:
     who = "You are the host." if role == HOST else "You are viewing it."
     st.markdown(f"Session ID: **{_markdown_text(sid)}**   {who}")
     st.fragment(_live, run_every=datetime.timedelta(seconds=CHECK_IN_S))(sid, role)
-    clock = st.components.v2.component("speakertimer_clock", html=_CLOCK_HTML, css=_CLOCK_CSS, js=_CLOCK_JS)
+    clock = st.components.v2.component("speakertime_clock", html=_CLOCK_HTML, css=_CLOCK_CSS, js=_CLOCK_JS)
     clock(key="clock", data={"sid": sid, **checked.shown.for_script()})
     if role == HOST:
         _host_controls(checked.shown)
@@ -687,7 +687,7 @@ def _live(sid: str, role: str) -> None:
     # timer's check-ins reached the script only with it), and the pop-out
     # must see every check-in arrive to know when to ask for one.
     state[_BEAT] = state.get(_BEAT, 0) + 1
-    sync = st.components.v2.component("speakertimer_sync", js=_SYNC_JS)
+    sync = st.components.v2.component("speakertime_sync", js=_SYNC_JS)
     sync(key="sync", data={"sid": sid, "beat": state[_BEAT], **checked.shown.for_script()}, on_tick_change=_ticked)
     shown = checked.shown
     if role == HOST:
@@ -719,7 +719,7 @@ def _show_notice() -> None:
 
 
 def _write_cookies() -> None:
-    writer = st.components.v2.component("speakertimer_cookies", js=_WRITER_JS)
+    writer = st.components.v2.component("speakertime_cookies", js=_WRITER_JS)
     op = st.session_state.get(_COOKIE_OP, {"n": 0, "last": None, "host": None})
     writer(key="cookies", data={**op, "seconds": _COOKIE_DAYS * 86400})
 
@@ -737,7 +737,7 @@ def main() -> None:
     if _HEARD not in state:
         # Components are registered on every run: registration belongs to
         # Streamlit's runtime, and AppTest starts one per test (ratesplot).
-        reader = st.components.v2.component("speakertimer_reader", js=COOKIE_READER_JS)
+        reader = st.components.v2.component("speakertime_reader", js=COOKIE_READER_JS)
         reader(key=_READER, data={"names": [LAST_COOKIE, HOSTS_COOKIE]}, on_cookies_change=_cookies_read)
         st.caption("Starting …")
         return

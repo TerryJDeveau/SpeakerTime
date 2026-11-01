@@ -12,9 +12,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from speakertimer import ids  # noqa: E402
-from speakertimer.sessions import EXPIRE_AFTER_S, HOST, HOST_GRACE_S, VIEWER, Refused, Registry  # noqa: E402
-from speakertimer.timer import (  # noqa: E402
+from speakertime import ids  # noqa: E402
+from speakertime.sessions import EXPIRE_AFTER_S, HOST, HOST_GRACE_S, VIEWER, Refused, Registry  # noqa: E402
+from speakertime.timer import (  # noqa: E402
     Timer, clock_text, elapsed_shown, limit_minutes, limit_seconds, remaining_shown,
 )
 

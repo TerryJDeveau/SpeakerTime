@@ -1,4 +1,4 @@
-# SpeakerTimer
+# SpeakerTime
 
 A talk's **Elapsed Time** and **Time Remaining**, shared live between a host
 (usually the session's chair) and any number of viewers (usually the speaker,
@@ -39,7 +39,7 @@ A web page cannot make itself open in a window of its own, but the browser can:
 
 - **Chrome**: open the page, then ⋮ menu → *Cast, save, and share* →
   *Install page as app…*. **Edge**: ⋯ menu → *Apps* → *Install this site as
-  an app*. Either one puts a SpeakerTimer icon on the desktop or taskbar that
+  an app*. Either one puts a SpeakerTime icon on the desktop or taskbar that
   opens the page in its own window, without tabs or an address bar.
 - **Pop out (stays on top)**, under the timers, opens a small window holding
   just the timers. It stays above every other window, the slides included,
@@ -95,10 +95,10 @@ and `--shots FOLDER` keeps a screenshot of each screen.
 
 | file | what it holds |
 |---|---|
-| `speakertimer/timer.py` | the timer: Start, Stop, Reset, the Time Limit, what is shown |
-| `speakertimer/ids.py` | session IDs: what may be typed, how it is read, random ones |
-| `speakertimer/sessions.py` | the sessions every page shares, and the rules for hosts |
-| `speakertimer/shared.py` | helpers copied from ratesplot, meant for the shared library planned for it and NG_analysis |
-| `speakertimer/web.py` | the page (Streamlit), the clock and pop-out scripts, and the cookies |
+| `speakertime/timer.py` | the timer: Start, Stop, Reset, the Time Limit, what is shown |
+| `speakertime/ids.py` | session IDs: what may be typed, how it is read, random ones |
+| `speakertime/sessions.py` | the sessions every page shares, and the rules for hosts |
+| `speakertime/shared.py` | helpers copied from ratesplot, meant for the shared library planned for it and NG_analysis |
+| `speakertime/web.py` | the page (Streamlit), the clock and pop-out scripts, and the cookies |
 | `streamlit_app.py` | the entry point Streamlit runs |
 | `tools/` | the three checks above |

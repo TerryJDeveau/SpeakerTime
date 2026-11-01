@@ -17,8 +17,8 @@ sys.path.insert(0, str(ROOT))
 
 from streamlit.testing.v1 import AppTest  # noqa: E402
 
-from speakertimer import web  # noqa: E402
-from speakertimer.sessions import REGISTRY  # noqa: E402
+from speakertime import web  # noqa: E402
+from speakertime.sessions import REGISTRY  # noqa: E402
 
 # AppTest logs "missing ScriptRunContext" at each new page; a filter stays where a level is reset (ratesplot).
 logging.getLogger("streamlit.runtime.scriptrunner_utils.script_run_context").addFilter(

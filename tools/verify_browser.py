@@ -29,7 +29,7 @@ from playwright.sync_api import Page, sync_playwright
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from speakertimer.sessions import HOST_GRACE_S  # noqa: E402
+from speakertime.sessions import HOST_GRACE_S  # noqa: E402
 
 FAILURES: list[str] = []
 
@@ -51,7 +51,7 @@ _POP_LABEL = """() => [...document.querySelectorAll('*')].find(e => e.shadowRoot
 
 # Check-ins counted for 4 s, with or without the pop-out's kick every 250 ms; and whether the clock was rebuilt meanwhile.
 _COUNT_CHECK_INS = """async (kicks) => {
-  const h = window.speakerTimer;
+  const h = window.speakerTime;
   let n = 0;
   const real = h.update.bind(h);
   h.update = (r) => { n++; real(r); };
@@ -150,8 +150,8 @@ def run(url: str, launch: dict, shots: Path | None) -> None:
         button(c, "Connect to Session").click()
         c.get_by_text("Please wait, connection pending").wait_for()
         ok("pending screen shown", True)
-        spin = c.locator(".speakertimer-spinner").evaluate("(e) => getComputedStyle(e).animationName")
-        ok("its spinner turns", spin == "speakertimer-spin", spin)
+        spin = c.locator(".speakertime-spinner").evaluate("(e) => getComputedStyle(e).animationName")
+        ok("its spinner turns", spin == "speakertime-spin", spin)
         shot(c, "2-pending.png")
         button(c, "Cancel").click()
         button(c, "Connect to Session").wait_for()
