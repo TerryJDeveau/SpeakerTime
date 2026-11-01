@@ -13,6 +13,9 @@ The rules (Terry, 2026-10-30):
   means no limit, and Time Remaining is then always zero.
 - The Time Limit is in minutes, to one decimal place (rounded to the nearest
   tenth), so it is always a whole number of seconds (a tenth is 6 s).
+- Two ways to show the times (Terry, 2026-11-01), chosen on each panel and
+  each pop-out by itself: CLOCK, hours, minutes and seconds ("4:05",
+  "1:02:03"), and MINUTES, minutes to a tenth ("4.0", "62.0").
 """
 
 from __future__ import annotations
@@ -23,6 +26,14 @@ from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 
 # A tenth of a minute, as Decimal's quantum for rounding the Time Limit.
 _TENTH = Decimal("0.1")
+
+# The two ways to show the times; the page's script names them the same way (``web._HUB_JS``).
+CLOCK = "clock"
+MINUTES = "minutes"
+MODES = (CLOCK, MINUTES)
+
+_TENTH_S = 6
+"""A tenth of a minute in seconds: the step of MINUTES, and of the Time Limit."""
 
 
 def limit_minutes(value: float | int | str | None) -> float | None:
@@ -61,6 +72,27 @@ def remaining_shown(elapsed: float, limit: float | None) -> int:
     """Time Remaining as shown, in whole seconds: the limit minus Elapsed Time as shown, so the two always add up to the limit; 0 with no limit."""
     seconds = limit_seconds(limit)
     return 0 if seconds is None else seconds - elapsed_shown(elapsed)
+
+
+def elapsed_tenths(elapsed: float) -> int:
+    """Elapsed Time as MINUTES shows it, in whole tenths of a minute: a tenth only once it has passed."""
+    return elapsed_shown(elapsed) // _TENTH_S
+
+
+def remaining_tenths(elapsed: float, limit: float | None) -> int:
+    """Time Remaining as MINUTES shows it, in tenths of a minute: the limit (a whole number of tenths) minus Elapsed Time as shown; 0 with no limit."""
+    seconds = limit_seconds(limit)
+    return 0 if seconds is None else seconds // _TENTH_S - elapsed_tenths(elapsed)
+
+
+def minutes_text(tenths: int) -> str:
+    """Tenths of a minute as MINUTES shows them: "0.0", "12.5", "125.0", and a minus sign (U+2212) before a negative time.
+
+    As ``clock_text``, the page's script formats the live timers the same way (``web._HUB_JS``, ``minutes``).
+    """
+    sign = "\u2212" if tenths < 0 else ""
+    whole, tenth = divmod(abs(tenths), 10)
+    return f"{sign}{whole}.{tenth}"
 
 
 def clock_text(seconds: int) -> str:

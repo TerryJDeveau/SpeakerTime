@@ -8,8 +8,10 @@ the shared sessions hold after each click, for two pages at once.
 
 from __future__ import annotations
 
+import json
 import logging
 import sys
+import urllib.parse
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -36,11 +38,18 @@ def check(what: str, got: object, expected: object) -> None:
         FAILURES.append(f"{what}: got {got!r}, expected {expected!r}")
 
 
-def page(cookies: dict | None = None) -> AppTest:
-    """A new page, its cookies' reader answered (AppTest runs no script): ``cookies`` as the script would send them."""
+def sent(cookies: dict | None = None, tab: str = "", browser: str = "") -> dict:
+    """What the page's reader would send (``web._READER_JS``): cookies by name (values as kept: JSON encoded), the tab's session, the browser's id."""
+    encoded = {name: value if isinstance(value, str) else urllib.parse.quote(json.dumps(value))
+               for name, value in (cookies or {}).items()}
+    return {"cookies": encoded, "tab": tab, "browser": browser}
+
+
+def page(heard: dict | None = None) -> AppTest:
+    """A new page, its reader answered (AppTest runs no script) with ``heard`` (``sent``); None leaves it unanswered."""
     at = AppTest.from_file(str(ROOT / "streamlit_app.py"), default_timeout=30)
-    if cookies is not None:
-        at.session_state[web._HEARD] = cookies
+    if heard is not None:
+        at.session_state[web._HEARD] = heard
     at.run()
     return at
 
@@ -61,7 +70,7 @@ def main() -> int:
     check("first run: only the reader", ([b.label for b in at.button], "Starting" in texts(at)), ([], True))
 
     # The start screen.
-    a = page({})
+    a = page(sent())
     check("start screen buttons", [b.label for b in a.button], ["Create New Session", "Connect to Session"])
     check("Session ID box", [t.label for t in a.text_input], ["Session ID"])
 
@@ -86,7 +95,7 @@ def main() -> int:
     check("running in the session", REGISTRY.shown(sid).running, True)
 
     # A second page: the ID taken; a viewer of it with the case and spaces changed.
-    b = page({})
+    b = page(sent())
     b.text_input(key=web._BOX).input(f" {sid[:3]} {sid[3:]} ").run()
     button(b, "Create New Session").click().run()
     check("taken ID refused", any("already has a host" in e.value for e in b.error), True)
@@ -95,7 +104,7 @@ def main() -> int:
     check("a viewer has no Start", [x.label for x in b.button if x.label in ("Start", "Stop", "Reset")], [])
 
     # A session not yet created: pending, and Cancel puts the ID back.
-    b2 = page({})
+    b2 = page(sent())
     b2.text_input(key=web._BOX).input("later on").run()
     button(b2, "Connect to Session").click().run()
     check("pending", "Please wait, connection pending" in texts(b2), True)
@@ -123,15 +132,40 @@ def main() -> int:
     check("Yes: the host", "You are the host." in texts(b), True)
     check("its limit box from the session", b.number_input(key=web._LIMIT_BOX).value, 2.3)
 
-    # The cookies: a page whose last session is running reconnects by itself; one whose is not has its ID in the box.
-    c = page({web.LAST_COOKIE: sid})
-    check("reconnected by the cookie", "Reconnected to session" in texts(c) and "You are viewing it." in texts(c), True)
-    d = page({web.LAST_COOKIE: "GONE"})
+    # What the browser keeps. A new window whose one recent session is running goes back to it by itself.
+    c = page(sent({web.RECENT_COOKIE: [sid, "GONE"]}, browser="browserC1"))
+    check("new window: back to its one recent session", "Reconnected to session" in texts(c) and "You are viewing it." in texts(c), True)
+    # Its last session not running: its ID in the box.
+    d = page(sent({web.RECENT_COOKIE: ["GONE"]}, browser="browserD1"))
     check("last session not running", (d.text_input(key=web._BOX).value, "is not running now" in texts(d)), ("GONE", True))
-    e = page({web.LAST_COOKIE: "%7Bspoilt", web.HOSTS_COOKIE: "not json"})
-    check("spoilt cookies: the start screen", e.session_state[web._SCREEN] if web._SCREEN in e.session_state else "start", "start")
+    # The one cookie of before 2026-11-01 is read as the recent list.
+    legacy = page(sent({web.LEGACY_LAST_COOKIE: sid}, browser="browserL1"))
+    check("the old cookie still reconnects", "Reconnected to session" in texts(legacy), True)
+    # Several running: a Rejoin button for each, nothing joined by itself.
+    other = page(sent())
+    other.text_input(key=web._BOX).input("second").run()
+    button(other, "Create New Session").click().run()
+    f = page(sent({web.RECENT_COOKIE: ["SECOND", sid]}, browser="browserF1"))
+    check("several: Rejoin buttons, on the start screen",
+          ([x.label for x in f.button if x.label.startswith("Rejoin")], "Create New Session" in [x.label for x in f.button]),
+          (["Rejoin SECOND", f"Rejoin {sid}"], True))
+    button(f, "Rejoin SECOND").click().run()
+    check("Rejoin: viewing it", ("You are viewing it." in texts(f), f.session_state[web._SID]), (True, "SECOND"))
+    # A reloaded tab goes back to its own session only: here SECOND, though the recent list puts the other first.
+    g = page(sent({web.RECENT_COOKIE: [sid, "SECOND"]}, tab="SECOND", browser="browserG1"))
+    check("reloaded tab: its own session", (g.session_state[web._SID], "Reconnected" in texts(g)), ("SECOND", True))
+    # A reloaded tab whose session is not running: waiting for it, as a viewer would; with its host token, the ID in the box.
+    w = page(sent(tab="LATER2", browser="browserW1"))
+    check("reloaded viewer's tab, session gone: waiting", "Please wait, connection pending" in texts(w), True)
+    hst = page(sent({web.HOSTS_COOKIE: {"LATER3": "token"}}, tab="LATER3", browser="browserH1"))
+    check("reloaded host's tab, session gone: its ID in the box",
+          (hst.text_input(key=web._BOX).value, "Create New Session starts it again" in texts(hst)), ("LATER3", True))
+    # Spoilt notes: the start screen.
+    e = page(sent({web.RECENT_COOKIE: "%7Bspoilt", web.HOSTS_COOKIE: "not json"}, tab="$$$", browser="no good!"))
+    check("spoilt notes: the start screen", e.session_state[web._SCREEN] if web._SCREEN in e.session_state else "start", "start")
+    check("a spoilt browser id is not used", e.session_state[web._BROWSER], None)
 
-    for at_ in (a, b, b2, c, d, e):
+    for at_ in (a, b, b2, c, d, e, legacy, other, f, g, w, hst):
         check("no exception", [x.value for x in at_.exception], [])
 
     for failure in FAILURES:
