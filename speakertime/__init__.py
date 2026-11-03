@@ -13,17 +13,19 @@ colours   the clocks' colours: the host's choices, the rule for black and
           white, and the Time Left Warning's colour
 sessions  the sessions every page shares (one process serves every visitor),
           and the rules for who hosts them
+store     the remembered settings kept off the app's machine as well, in a
+          secret GitHub gist, so that they outlast a Reboot
 shared    copies of ratesplot's helpers (the version shown, the cookie's
           reader); they are to come from the shared library planned for
           ratesplot and NG_analysis, once that exists
 web       the Streamlit page; ``streamlit_app.py`` runs it
 
 The dependency direction is one-way: ``web`` imports the others; ``sessions``
-imports ``timer``, ``ids`` and ``colours``; ``timer``, ``ids``, ``colours`` and
-``shared`` import none of this package.
+imports ``timer``, ``ids``, ``colours`` and ``store``; ``timer``, ``ids``,
+``colours``, ``store`` and ``shared`` import none of this package.
 """
 
 # The version, major.minor (ratesplot's rule, 2026-10-27, taken over here):
 # the minor is raised by one in a commit of its own before each push of a
 # build; the major after a significant new capability.
-__version__ = "1.8"
+__version__ = "1.9"

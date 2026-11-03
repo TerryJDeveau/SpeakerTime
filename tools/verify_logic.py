@@ -8,10 +8,13 @@ checked to the second. Prints each failure and a count; exits 1 on any.
 from __future__ import annotations
 
 import contextlib
+import http.server
 import io
 import json
 import sys
 import tempfile
+import threading
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -19,8 +22,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from speakertime import colours, ids  # noqa: E402
 from speakertime.colours import BLACK, DARK, LIGHT, WHITE  # noqa: E402
 from speakertime.sessions import (  # noqa: E402
-    EXPIRE_AFTER_S, HOST, HOST_GRACE_S, SIZE_DEFAULT, SIZE_MAX, SIZE_MIN, VIEWER, Refused, Registry, Settings,
+    EXPIRE_AFTER_S, HOST, HOST_GRACE_S, REMOTE_RETRY_S, SIZE_DEFAULT, SIZE_MAX, SIZE_MIN, VIEWER, Refused, Registry, Settings,
 )
+from speakertime.store import GIST_DESCRIPTION, GIST_FILE, GistStore  # noqa: E402
 from speakertime.timer import (  # noqa: E402
     CLOCK, MINUTES, Timer, clock_text, elapsed_shown, elapsed_tenths, limit_minutes, limit_seconds, minutes_text,
     remaining_shown, remaining_tenths,
@@ -475,6 +479,191 @@ def remember_checks() -> None:
     check("written in this version's form", (written.get("format"), sorted(written.get("sessions", {}))), (2, ["NEW", "OLD"]))
 
 
+class _GitHub(http.server.ThreadingHTTPServer):
+    """A stand-in for the part of GitHub's API the gist store uses: an account's gists, one gist, make one, change one.
+
+    ``fail`` answers that many requests with 500 first; a request with
+    another token than ``token`` gets 401; ``calls`` lists each (method, path).
+    """
+
+    token = "good-token"
+
+    def __init__(self) -> None:
+        super().__init__(("127.0.0.1", 0), _GitHubHandler)
+        self.gists: dict[str, dict] = {}
+        self.fail = 0
+        self.calls: list[tuple[str, str]] = []
+        threading.Thread(target=self.serve_forever, daemon=True).start()
+
+    @property
+    def api(self) -> str:
+        return f"http://127.0.0.1:{self.server_address[1]}"
+
+    def content(self) -> dict | None:
+        """The table in the app's gist, read; None if there is no such gist."""
+        for gist in self.gists.values():
+            if gist["description"] == GIST_DESCRIPTION:
+                return json.loads(gist["files"][GIST_FILE]["content"])
+        return None
+
+
+class _GitHubHandler(http.server.BaseHTTPRequestHandler):
+    def log_message(self, *args: object) -> None:  # quiet
+        pass
+
+    def _answer(self, code: int, body: object) -> None:
+        data = json.dumps(body).encode("utf-8")
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def _serve(self, method: str) -> None:
+        hub: _GitHub = self.server  # type: ignore[assignment]
+        hub.calls.append((method, self.path))
+        if self.headers.get("Authorization") != f"Bearer {hub.token}":
+            return self._answer(401, {"message": "Bad credentials"})
+        if hub.fail > 0:
+            hub.fail -= 1
+            return self._answer(500, {"message": "a failure, as asked"})
+        body = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"null")
+        path, _, query = self.path.partition("?")
+        if method == "GET" and path == "/gists":
+            page = int(dict(p.split("=") for p in query.split("&")).get("page", "1"))
+            listed = [{"id": i, "description": g["description"]} for i, g in hub.gists.items()]
+            return self._answer(200, listed[(page - 1) * 100:page * 100])
+        if method == "POST" and path == "/gists":
+            gist_id = f"g{len(hub.gists) + 1}"
+            hub.gists[gist_id] = {"description": body["description"], "public": body["public"], "files": body["files"]}
+            return self._answer(201, {"id": gist_id})
+        gist = hub.gists.get(path.removeprefix("/gists/"))
+        if gist is None:
+            return self._answer(404, {"message": "Not Found"})
+        if method == "PATCH":
+            gist["files"].update(body["files"])
+        return self._answer(200, {"files": {name: {**f, "truncated": False} for name, f in gist["files"].items()}})
+
+    def do_GET(self) -> None:
+        self._serve("GET")
+
+    def do_POST(self) -> None:
+        self._serve("POST")
+
+    def do_PATCH(self) -> None:
+        self._serve("PATCH")
+
+
+def remote_checks() -> None:
+    """v1.9: the settings kept in a gist as well, so that a Reboot (a new machine, its file gone) keeps them (Terry, 2026-11-03)."""
+    hub = _GitHub()
+    folder = Path(tempfile.mkdtemp())
+
+    def gist(token: str = _GitHub.token) -> GistStore:
+        return GistStore(token, api=hub.api, write_after=0.1, retry_after=(0.2,))
+
+    # The store alone: no gist yet; the first write makes a secret one; writes close together make one.
+    alone = gist()
+    check("no gist yet: nothing to read", alone.load(), None)
+    alone.save('{"n": 1}')
+    alone.flush(5)
+    made = [g for g in hub.gists.values() if g["description"] == GIST_DESCRIPTION]
+    check("the first write makes one gist, secret, holding the table",
+          (len(made), made[0]["public"] if made else None, hub.content()), (1, False, {"n": 1}))
+    before = alone.writes
+    for n in (2, 3, 4):
+        alone.save(json.dumps({"n": n}))
+    alone.flush(5)
+    check("three saves close together: one write, the latest", (alone.writes - before, hub.content()), (1, {"n": 4}))
+    check("read back", json.loads(gist().load() or "null"), {"n": 4})
+    hub.gists.clear()
+
+    # A host sets a session up and leaves; the app is rebooted (a new machine: a new, empty file); the next host
+    # creating that ID starts from its settings.
+    first = Registry(clock=Clock(), store=folder / "first.json")
+    first.use_remote(gist())
+    check("the registry keeps the gist", first.has_remote(), True)
+    first.create("TALK7", "H")
+    first.control("TALK7", "H", "limit", 7.5)
+    first.control("TALK7", "H", "warning", 1.5)
+    first.set_colour("TALK7", "H", "remaining", "orange")
+    first.leave("TALK7", "H")
+    first.remote_written(5)
+    check("the gist holds the session's settings", (hub.content() or {}).get("sessions", {}).get("TALK7", {}).get("limit"), 7.5)
+    rebooted = Registry(clock=Clock(), store=folder / "rebooted.json")
+    check("after a Reboot, before the gist is read: nothing", rebooted.remembered("TALK7"), None)
+    rebooted.use_remote(gist())
+    _, _, notice = rebooted.create("TALK7", "H2")
+    shown = rebooted.shown("TALK7")
+    check("after a Reboot: created again from the gist's settings, with the notice",
+          (shown.limit, shown.warning, shown.colours["remaining"], notice is not None), (7.5, 1.5, "orange", True))
+    check("and the new machine's file has them too", "TALK7" in json.loads((folder / "rebooted.json").read_text(encoding="utf-8"))["sessions"], True)
+
+    # The two tables merged: a session in both takes the newer one's; one in either alone is kept.
+    rebooted.remote_written(5)
+    newer = {"format": 2, "written": time.time() + 1000,
+             "sessions": {"TALK7": {"limit": 9.0}, "LOCAL": {"limit": 4.0}}}
+    (folder / "newer.json").write_text(json.dumps(newer), encoding="utf-8")
+    merged = Registry(clock=Clock(), store=folder / "newer.json")
+    merged.use_remote(gist())
+    merged.remote_written(5)
+    gist_now = (hub.content() or {}).get("sessions", {})
+    check("the file newer: its settings win, the gist is brought up to them",
+          (merged.remembered("TALK7").limit, merged.remembered("LOCAL").limit, gist_now.get("TALK7", {}).get("limit"),
+           gist_now.get("LOCAL", {}).get("limit")), (9.0, 4.0, 9.0, 4.0))
+    hub.gists[next(iter(hub.gists))]["files"][GIST_FILE]["content"] = json.dumps(
+        {"format": 2, "written": time.time() + 2000, "sessions": {"ONLY": {"limit": 2.0}}})
+    older = Registry(clock=Clock(), store=folder / "newer.json")
+    older.use_remote(gist())
+    older.remote_written(5)
+    check("the gist newer: a session in the file alone is kept, and the gist given it",
+          (older.remembered("ONLY").limit, older.remembered("TALK7").limit, sorted((hub.content() or {}).get("sessions", {}))),
+          (2.0, 9.0, ["LOCAL", "ONLY", "TALK7"]))
+
+    # The gist cannot be read: said so, nothing written to it (it would replace what is kept there); tried again
+    # REMOTE_RETRY_S later, not sooner.
+    clock = Clock()
+    blind = Registry(clock=clock, store=folder / "blind.json")
+    hub.fail = 1
+    said = io.StringIO()
+    with contextlib.redirect_stderr(said):
+        blind.use_remote(gist())
+    check("the gist unreadable: a warning, not kept, nothing written",
+          ("Warning:" in said.getvalue(), blind.has_remote(), hub.calls[-1][0]), (True, False, "GET"))
+    calls = len(hub.calls)
+    clock.step(REMOTE_RETRY_S - 1)
+    blind.use_remote(gist())
+    check("not tried again sooner than REMOTE_RETRY_S", (len(hub.calls), blind.has_remote()), (calls, False))
+    clock.step(2)
+    blind.use_remote(gist())
+    check("tried again after it: kept, its settings read", (blind.has_remote(), blind.remembered("ONLY").limit), (True, 2.0))
+
+    # A write that fails is tried again; the latest table arrives.
+    hub.fail = 1
+    with contextlib.redirect_stderr(said):
+        blind.create("RETRY", "P")
+        blind.control("RETRY", "P", "limit", 3.0)
+        blind.remote_written(5)
+    check("a failed write tried again: the latest table arrives",
+          (hub.content() or {}).get("sessions", {}).get("RETRY", {}).get("limit"), 3.0)
+
+    # A wrong token: said so, not kept; a gist whose table is spoilt: said so, kept, and given this machine's table.
+    said = io.StringIO()
+    with contextlib.redirect_stderr(said):
+        wrong = Registry(clock=Clock(), store=folder / "wrong.json")
+        wrong.use_remote(gist("bad-token"))
+    check("a wrong token: a warning, not kept", ("401" in said.getvalue(), wrong.has_remote()), (True, False))
+    hub.gists[next(iter(hub.gists))]["files"][GIST_FILE]["content"] = "{not json"
+    said = io.StringIO()
+    with contextlib.redirect_stderr(said):
+        mended = Registry(clock=Clock(), store=folder / "newer.json")
+        mended.use_remote(gist())
+        mended.remote_written(5)
+    check("a spoilt gist: a warning, kept, and given the file's table",
+          ("Warning:" in said.getvalue(), mended.has_remote(), "LOCAL" in (hub.content() or {}).get("sessions", {})), (True, True, True))
+    hub.shutdown()
+
+
 def main() -> int:
     timer_checks()
     id_checks()
@@ -483,6 +672,7 @@ def main() -> int:
     tab_checks()
     colour_checks()
     remember_checks()
+    remote_checks()
     for failure in FAILURES:
         print("FAIL", failure)
     print(f"{COUNT - len(FAILURES)} of {COUNT} checks passed")

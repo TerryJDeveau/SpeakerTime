@@ -77,13 +77,15 @@ for trying it out): only the host's own tab is the host again after a reload.
 **A session used before**: a session nobody has open goes six hours later
 (or when the app restarts), but its settings are kept: **Create New
 Session** under its ID later starts from its Time Limit, Time Left Warning,
-sizes, colours and way of showing the times, and says so. They are kept in
-`remembered_sessions.json` beside the program (the last 500 sessions). On
-Streamlit Community Cloud that file is lost when the app is rebooted
-(measured 2026-11-03: a Reboot starts a new machine from a fresh copy of the
-repository); it outlived the update a push brings by itself. Whether it
-outlives a sleep has not been checked; if waking the app starts a new
-machine too, it is lost then as well.
+sizes, colours and way of showing the times, and says so. So a host can set a
+session up under an ID, leave, give the ID to someone else, and that person's
+Create New Session starts from those settings. They are kept in
+`remembered_sessions.json` beside the program (the last 500 sessions), and,
+from v1.9, in a secret GitHub gist as well, once the app is given a token
+for one (below, Running it). On Streamlit Community Cloud the file is lost
+when the app is rebooted (measured 2026-11-03: a Reboot starts a new machine
+from a fresh copy of the repository), so without the gist the settings last
+only until the next Reboot, and perhaps the next sleep.
 
 ## Its own window, kept on top
 
@@ -133,6 +135,25 @@ is running: a Reboot, a push of new code, or a sleep after 12 hours without
 visitors. The first visitor after a sleep has to wake the app, which takes
 up to a minute, so open the page a few minutes before a talk.
 
+**Keeping the remembered settings through a Reboot** (v1.9): give the app a
+GitHub token that may write gists, and it keeps the settings in a secret gist
+of that account as well. It reads the gist when it starts, and writes to it
+a few seconds after each change. It finds its gist by the gist's
+description, and makes it the first time it writes, so the token is the
+only setting:
+
+1. On GitHub: Settings, Developer settings, Personal access tokens, Tokens
+   (classic), Generate new token (classic). Tick the **gist** scope alone,
+   choose an expiry ("No expiration" means nothing to renew), and copy the
+   token.
+2. On Streamlit Community Cloud: the app's Settings, Secrets, and add the
+   line `SPEAKERTIME_GIST_TOKEN = "the token"`. Save.
+
+A secret gist is not listed anywhere, but anyone given its address can read
+it: it holds session IDs and their settings, nothing else. Locally, the
+environment variable `SPEAKERTIME_GIST_TOKEN` does the same; with neither,
+the settings are kept in the file alone.
+
 ## Checks
 
 ```bash
@@ -162,6 +183,7 @@ and `--shots FOLDER` keeps a screenshot of each screen.
 | `speakertime/timer.py` | the timer: Start, Stop, Reset, the Time Limit, what is shown |
 | `speakertime/ids.py` | session IDs: what may be typed, how it is read, random ones |
 | `speakertime/sessions.py` | the sessions every page shares, and the rules for hosts |
+| `speakertime/store.py` | the remembered settings kept in a secret GitHub gist as well (v1.9) |
 | `speakertime/shared.py` | helpers copied from ratesplot, meant for the shared library planned for it and NG_analysis |
 | `speakertime/web.py` | the page (Streamlit), the clock and pop-out scripts, and the cookies |
 | `streamlit_app.py` | the entry point Streamlit runs |
