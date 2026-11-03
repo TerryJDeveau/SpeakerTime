@@ -18,7 +18,10 @@ slider on the right of each timer sets its size on every viewer's panel and
 pop-out as well as the host's, from 25 to 800, starting at 200. The panel
 spans the browser window: at 800 its figures are twice as large as at 400,
 where the panel is wide enough (a little over 1,400 pixels for a time of
-five characters, "12:34"); on a narrower one they stop at its width. In a
+five characters, "12:34"); on a narrower one they stop at its width. It
+grows no wider than a time of eight characters ("12:34:56") needs at 800,
+about 2,240 pixels (2,350 on the host's panel, with its sliders and colour
+buttons), and stands in the middle of a wider window. In a
 pop-out they stop at 400's size, which already fills its width. A wide, low
 pop-out (at least two and a half times as wide as it is high) puts the Time
 Limit and the switch beside the timers instead of under them, so the figures
@@ -34,7 +37,8 @@ panel white with black text; choosing white does the opposite.
 
 **Time Left Warning**: to the right of the Time Limit box, in minutes (blank
 for none). Once set, it shows beside the Time Limit on every panel and
-pop-out, and while Time Remaining is that many minutes or fewer (and more
+pop-out, the two together in the middle as the switch's buttons are, and
+while Time Remaining is that many minutes or fewer (and more
 than zero) it changes to the warning's colour. That colour is green while
 Time Remaining is white or black, and otherwise the colour opposite Time
 Remaining's on the colour wheel (the **A** button); the four buttons after it
