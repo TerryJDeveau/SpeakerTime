@@ -508,6 +508,22 @@ def colours_and_warning(a: Page, c: Page) -> None:
     c.wait_for_timeout(2500)
     ok("the warning blanked: none shown, Remaining in its own colour",
        (on_clock(a, _PAINT)["warningShown"], on_clock(a, _PAINT)["warn"]) == (False, False), on_clock(a, _PAINT))
+    # The host's page has had a dozen whole runs by now: still one timer drawing its panel (10 a second).
+    on_clock(c, "() => true")
+    draws = c.evaluate(_PANEL_DRAWS)
+    ok("one timer draws the panel, however many runs (about 10 draws a second)", 8 <= draws <= 12, draws)
+
+
+# The panel's draws in a second (the pop-out's, drawn into its document, not counted).
+_PANEL_DRAWS = """async () => {
+  const h = window.speakerTime;
+  let n = 0;
+  const real = h.draw.bind(h);
+  h.draw = (root, mode) => { if (!root.body) n++; real(root, mode); };
+  await new Promise((r) => setTimeout(r, 2000));
+  h.draw = real;
+  return n / 2;
+}"""
 
 
 def windows_of_one_browser(browser, errors: list[str]) -> None:

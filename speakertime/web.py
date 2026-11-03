@@ -310,6 +310,8 @@ const hub = () => (window.speakerTime ??= {{
   lastKick: 0,      // when the pop-out last asked for one
   kick: null,       // asks for a check-in (the latest sync element's trigger)
   clock: null,      // the panel's clock (the .clock element) as last laid out
+  panelTimer: null, // the page's one timer drawing it (_CLOCK_JS)
+  send: null,       // the clock element's trigger, as the latest run gave it
   missing: 0,       // check-ins running that found it gone from the page (_SYNC_JS)
   pip: null,        // the pop-out window, while open
   opening: false,   // a pop-out asked for and not yet given
@@ -546,47 +548,69 @@ const pipApi = () => {{
   }}
 }};
 
+// The panel as it is now (h.clock, the element last laid out): drawn every
+// DRAW_MS by the page's one timer.
+const drawPanel = (h) => {{
+  const root = h.clock;
+  if (root === null || !root.isConnected) return;
+  h.draw(root, h.pageMode);
+  const pop = root.querySelector(".pop");
+  const label = h.pip !== null ? POP_CLOSE : POP_OPEN;
+  if (pop.textContent !== label) pop.textContent = label;
+}};
+
+// Called again with each run's data (Streamlit 1.64 components v2), on the
+// same element or a new one, and the cleanup a call returns is not called
+// between calls: measured 2026-11-03, a timer started at each call made 210
+// draws a second after 20 runs. So each call takes the run's data, the
+// buttons' listeners are added once per element (sending through h.send,
+// the latest call's), and the page has one timer (h.panelTimer).
 export default function (component) {{
   const {{ data, parentElement, setTriggerValue }} = component;
   const h = hub();
   h.update(data);
   h.pageMode = data.mode;
-  h.preview = {{}};  // the sizes laid out with this element are the server's
+  h.preview = {{}};  // the sizes laid out with this run are the server's
+  h.send = setTriggerValue;
   const root = parentElement.querySelector(".clock");
   h.clock = root;
   root.classList.toggle("host", data.host);
-  const pop = root.querySelector(".pop");
-  const note = root.querySelector(".note");
-  const draw = () => {{
-    h.draw(root, h.pageMode);
-    const label = h.pip !== null ? POP_CLOSE : POP_OPEN;
-    if (pop.textContent !== label) pop.textContent = label;
-  }};
-
-  // The host's sliders: shown at once while dragged, sent when let go.
   if (data.host) {{
     for (const slider of root.querySelectorAll("input.size")) {{
-      const name = slider.dataset.t;
-      slider.value = String(data.sizes[name]);
+      slider.value = String(data.sizes[slider.dataset.t]);
       slider.hidden = false;
-      slider.addEventListener("input", () => {{
-        h.preview[name] = Number(slider.value);
-        draw();
-      }});
-      slider.addEventListener("change", () => {{
-        h.preview[name] = Number(slider.value);
-        setTriggerValue("size", {{ timer: name, percent: Number(slider.value) }});
-      }});
     }}
-    // The colour buttons beside each slider: the server applies Terry's rule for black and white.
-    for (const group of root.querySelectorAll(".swatches")) {{
-      group.hidden = false;
-      for (const button of group.querySelectorAll("button")) {{
-        button.addEventListener("click", () => {{
-          if (button.classList.contains("on")) return;
-          setTriggerValue("colour", {{ timer: group.dataset.t, colour: button.dataset.c }});
-        }});
-      }}
+    for (const group of root.querySelectorAll(".swatches")) group.hidden = false;
+  }}
+  h.panelTimer ??= setInterval(() => drawPanel(h), DRAW_MS);
+  if (root.dataset.wired !== "1") {{
+    root.dataset.wired = "1";
+    wire(h, root);
+  }}
+  drawPanel(h);
+}}
+
+function wire(h, root) {{
+  const note = root.querySelector(".note");
+  // The host's sliders: shown at once while dragged, sent when let go.
+  for (const slider of root.querySelectorAll("input.size")) {{
+    const name = slider.dataset.t;
+    slider.addEventListener("input", () => {{
+      h.preview[name] = Number(slider.value);
+      drawPanel(h);
+    }});
+    slider.addEventListener("change", () => {{
+      h.preview[name] = Number(slider.value);
+      h.send("size", {{ timer: name, percent: Number(slider.value) }});
+    }});
+  }}
+  // The colour buttons beside each slider: the server applies Terry's rule for black and white.
+  for (const group of root.querySelectorAll(".swatches")) {{
+    for (const button of group.querySelectorAll("button")) {{
+      button.addEventListener("click", () => {{
+        if (button.classList.contains("on")) return;
+        h.send("colour", {{ timer: group.dataset.t, colour: button.dataset.c }});
+      }});
     }}
   }}
 
@@ -595,11 +619,12 @@ export default function (component) {{
     button.addEventListener("click", () => {{
       if (h.pageMode === button.dataset.m) return;
       h.pageMode = button.dataset.m;
-      draw();
-      setTriggerValue("mode", button.dataset.m);
+      drawPanel(h);
+      h.send("mode", button.dataset.m);
     }});
   }}
 
+  const pop = root.querySelector(".pop");
   const api = pipApi();
   if (api !== null) {{
     pop.hidden = false;
@@ -623,9 +648,6 @@ export default function (component) {{
       }}
     }});
   }}
-  draw();
-  const timer = setInterval(draw, DRAW_MS);
-  return () => clearInterval(timer);
 }}
 """
 )
