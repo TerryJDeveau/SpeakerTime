@@ -85,6 +85,14 @@ _SLIDE = f"""([timer, percent]) => {{
 }}"""
 _SLIDERS = f"() => [...{_CLOCK_ROOT}.querySelectorAll('input.size')].filter(s => !s.hidden).map(s => s.dataset.t)"
 _SWITCH = f"(mode) => {_CLOCK_ROOT}.querySelector('.modes button[data-m=\"' + mode + '\"]').click()"
+# The clock's width on the page, and the widest of the page's other elements (web._PAGE_STYLE).
+_WIDTHS = """() => {
+  const block = document.querySelector('[data-testid="stMainBlockContainer"] > [data-testid="stVerticalBlock"]');
+  const kids = [...block.children];
+  const width = (e) => Math.round(e.getBoundingClientRect().width);
+  return { clock: width(kids.find(k => k.classList.contains('st-key-clock'))),
+           others: kids.filter(k => !k.classList.contains('st-key-clock')).map(width) };
+}"""
 
 _COUNT_CHECK_INS = """async (kicks) => {
   const h = window.speakerTime;
@@ -379,7 +387,7 @@ def sizes_and_modes(a: Page, b: Page, c: Page, pip: Page) -> None:
     ok("the host has a slider beside each timer", on_clock(c, _SLIDERS) == ["elapsed", "remaining"], on_clock(c, _SLIDERS))
     ok("a viewer has none", on_clock(a, _SLIDERS) == [], on_clock(a, _SLIDERS))
     maxima = on_clock(c, f"() => [...{_CLOCK_ROOT}.querySelectorAll('input.size')].map(s => [s.value, s.max])")
-    ok("the sliders start half way and go to 400", maxima == [["200", "400"], ["200", "400"]], maxima)
+    ok("the sliders start at 200 and go to 800", maxima == [["200", "800"], ["200", "800"]], maxima)
     before, pip_before = on_clock(a, _PANEL), pip.evaluate(_POPOUT)
     on_clock(c, _SLIDE, ["elapsed", 100])
     c.wait_for_timeout(2500)
@@ -400,6 +408,23 @@ def sizes_and_modes(a: Page, b: Page, c: Page, pip: Page) -> None:
     ok("Remaining at 400: a third larger again, on a viewer's panel and in the pop-out (not stopped short)",
        1.30 <= at_400["remainingPx"] / at_300["remainingPx"] <= 1.36 and 1.30 <= pip_400["remainingPx"] / pip_300["remainingPx"] <= 1.36,
        [at_300, at_400, pip_300, pip_400])
+    # v1.6 (Terry, 2026-11-03: "about double" the largest): 800 twice 400's size where the panel is wide enough, the
+    # page's other elements kept to their column; the pop-out stays at 400's size. Then back to 400 for what follows.
+    a.set_viewport_size({"width": 1700, "height": 900})
+    a.wait_for_timeout(800)
+    wide_400 = on_clock(a, _PANEL)
+    on_clock(c, _SLIDE, ["remaining", 800])
+    c.wait_for_timeout(2500)
+    wide_800, pip_800 = on_clock(a, _PANEL), pip.evaluate(_POPOUT)
+    widths = a.evaluate(_WIDTHS)
+    ok("Remaining at 800 on a wide panel: twice 400's; the pop-out stays at 400's",
+       1.9 <= wide_800["remainingPx"] / wide_400["remainingPx"] <= 2.1 and abs(pip_800["remainingPx"] - pip_400["remainingPx"]) < 0.5,
+       [wide_400, wide_800, pip_400, pip_800])
+    ok("the clock spans the wide page, everything else keeps its column (704 px)",
+       widths["clock"] > 1400 and max(widths["others"]) <= 704, widths)
+    on_clock(c, _SLIDE, ["remaining", 400])
+    c.wait_for_timeout(2500)
+    a.set_viewport_size({"width": 800, "height": 900})
 
     # 13. Ways of showing the times. The host's switch changes its own panel only, and not its pop-out.
     ok("all start at H:MM:SS", (mode_of(c), mode_of(a), pip.evaluate(_POPOUT)["mode"]) == ("clock", "clock", "clock"))

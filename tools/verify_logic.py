@@ -468,8 +468,8 @@ def remember_checks() -> None:
     # v1.2's file (the table of sessions alone, sizes on a scale half as fine): read at twice its sizes, within bounds.
     store.write_text(json.dumps({"OLD": {"limit": 3.0, "sizes": {"elapsed": 100, "remaining": 300}}}), encoding="utf-8")
     old = Registry(clock=Clock(), store=store)
-    check("v1.2's file: its sizes twice, within bounds", (old.remembered("OLD").limit, old.remembered("OLD").sizes),
-          (3.0, {"elapsed": 200, "remaining": SIZE_MAX}))
+    check("v1.2's file: its sizes twice, no larger than v1.2 drew (400)", (old.remembered("OLD").limit, old.remembered("OLD").sizes),
+          (3.0, {"elapsed": 200, "remaining": 400}))
     old.create("NEW", "P")
     written = json.loads(store.read_text(encoding="utf-8"))
     check("written in this version's form", (written.get("format"), sorted(written.get("sessions", {}))), (2, ["NEW", "OLD"]))

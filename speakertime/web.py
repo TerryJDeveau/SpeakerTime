@@ -184,18 +184,25 @@ _BLINK_S = 1.0
 _CHAR_EM = 0.62
 """The width of a character of the figures, in em, a little over a digit's (0.55 to 0.6 in the system fonts, tabular): the figures shrink to fit their column."""
 
-# The figures' size at 100 % of the host's slider: a quarter of the largest
-# that fit (sessions.SIZE_MAX is 400), so the slider's whole range takes
-# effect (Terry, 2026-11-03). Five characters ("12:34", "−0:05", "125.0":
-# a talk of ten minutes or more shows five) at 0.62 em fill a column of
-# 100 cqw at 32.3 cqw; a quarter of that is 8 cqw. Measured first with four
-# (10 cqw): a 12.5-minute limit's "12:30" stopped at 320. The pop-out's
-# figures are bounded by its width (96 vw: 31 vw for five characters, so
-# 7.7 vw) and, in a wide and low pop-out, by its height: 54 vh at the most,
-# leaving the rest for the labels, the other timer and the Time Limit.
-# Longer figures ("1:02:03") still shrink to fit near the top of the range.
-_PANEL_UNIT = "max(8px, 8cqw)"
+# The figures' size at 100 % of the host's slider (sessions.SIZE_MAX).
+# v1.3 (Terry, 2026-11-03): a quarter of the largest that fit the page's
+# centred column, so that 400 filled it: five characters ("12:34",
+# "−0:05", "125.0": a talk of ten minutes or more shows five) at 0.62 em
+# fill a column of 100 cqw at 32.3 cqw; a quarter of that is 8 cqw, about
+# 56 px in that column. Measured first with four (10 cqw): a 12.5-minute
+# limit's "12:30" stopped at 320. v1.6: the panel spans the browser window
+# (main), and the unit stops at 56 px, so a size looks as it did in v1.3 on
+# a computer while 800 doubles it where the panel is wide enough; figures
+# never grow wider than their column, and on a phone the unit stays 8 cqw.
+# The pop-out's figures are bounded by its width (96 vw: 31 vw for five
+# characters, so 7.7 vw) and, in a wide and low pop-out, by its height,
+# and stop at 400's size (_PIP_LARGEST): 54 vh at the most, leaving the
+# rest for the labels, the other timer and the Time Limit. Longer figures
+# ("1:02:03") still shrink to fit near the top of the range.
+_PANEL_UNIT = "clamp(8px, 8cqw, 56px)"
 _PIP_UNIT = "min(7.7vw, 13.5vh)"
+_PIP_LARGEST = 4
+"""A pop-out's figures stop at this many units (400 on the slider): larger would leave its window (Terry, 2026-11-03)."""
 
 _DRAW_MS = 100
 """The clock is drawn every 100 ms: a second's change shows within a tenth of a second."""
@@ -294,7 +301,7 @@ _PIP_CSS = f"""
   .cell {{ display: flex; flex-direction: column; align-items: center; line-height: 1; }}
   .label {{ font-size: min(5vw, 6vh); margin-bottom: 0.6vh; }}
   .value {{ --scale: 1; --chars: 4; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap;
-    font-size: min(calc(var(--scale) * {_PIP_UNIT}), calc(96vw / (var(--chars) * {_CHAR_EM}))); }}
+    font-size: min(calc(var(--scale) * {_PIP_UNIT}), calc({_PIP_LARGEST} * {_PIP_UNIT}), calc(96vw / (var(--chars) * {_CHAR_EM}))); }}
   .limit .value {{ font-size: min(7vw, 9vh); font-weight: 600; }}
   .row[data-r="remaining"], .row[data-r="limit"] {{ margin-top: 3vh; }}
   {_SHARED_CSS}
@@ -1089,6 +1096,11 @@ export default function (component) {{
 _PAGE_STYLE = """
 <style>
 [data-testid="stMainBlockContainer"] { padding-top: 3.2rem; padding-bottom: 2rem; }
+/* The page is wide so that the clock can span the window (Terry, 2026-11-03: twice the largest figures); everything
+   else keeps the centred column it had (44rem, 704 px), each element where it stood in it. */
+[data-testid="stMainBlockContainer"] > [data-testid="stVerticalBlock"] > :not(.st-key-clock) {
+  max-width: 44rem; margin-left: max(0px, calc((100% - 44rem) / 2));
+}
 .speakertime-wait { display: flex; align-items: center; gap: 0.7em; font-size: 1.25rem; margin: 0.5rem 0 0.25rem; }
 .speakertime-spinner {
   width: 1.3em; height: 1.3em; flex: none; border-radius: 50%;
@@ -1678,7 +1690,7 @@ def _write_cookies() -> None:
 
 def main() -> None:
     """The page: one run of it (Streamlit runs it again after every change)."""
-    st.set_page_config(page_title=PAGE_TITLE, page_icon="⏱️", layout="centered")
+    st.set_page_config(page_title=PAGE_TITLE, page_icon="⏱️", layout="wide")  # the clock spans the window (_PAGE_STYLE)
     st.html(_PAGE_STYLE)
     REGISTRY.set_connected(_connected)
     state = st.session_state

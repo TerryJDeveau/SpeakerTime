@@ -87,17 +87,23 @@ VIEWER = "viewer"
 SIZED = ("elapsed", "remaining")
 """The timers whose size the host sets (the Time Limit's figures keep theirs)."""
 
-SIZE_MIN, SIZE_MAX, SIZE_STEP, SIZE_DEFAULT = 25, 400, 5, 200
-"""A timer's size, in percent of a quarter of the largest figures that fit (``web``): SIZE_MAX is the largest.
+SIZE_MIN, SIZE_MAX, SIZE_STEP, SIZE_DEFAULT = 25, 800, 5, 200
+"""A timer's size, in percent of the figures' size at 100 (``web``): SIZE_MAX is the largest.
 
-So the slider's whole range takes effect (Terry, 2026-11-03: in v1.2 the
-figures stopped growing part way up it, on the panel and in the pop-out).
-At SIZE_MAX five characters ("12:34") just fill the panel's width, or the
-pop-out's, or, in a wide and low pop-out, a little over half its height.
-The default is half way: figures about four fifths the size v1.0 to v1.2
-drew at their default, which was 100 on a scale twice as coarse (settings
-kept before are read at twice their number, ``Registry._load``).
+v1.3 (Terry, 2026-11-03: in v1.2 the figures stopped growing part way up
+the slider): 400 was the largest, at which five characters ("12:34") just
+fill a panel of the page's centred column, about 700 px. v1.6 (Terry, the
+same day: the slider's maximum "about double the actual largest clock size
+that is available at present"): the panel spans the browser window, and
+800 draws figures twice as large where the panel is wide enough (a little
+over 1,400 px for five characters); on a narrower one they stop at its
+width. The pop-out stops at 400's size: there its figures already fill
+the window's width at 400 (or half its height, in a wide, low one), and
+Chrome sets the pop-out's size, not the page (measured). The default is
+200, figures the size v1.3 drew at it.
 """
+_V12_LARGEST = 400
+"""The largest size v1.2's figures reached, on this scale: its sizes, read at twice their number, stop here."""
 
 
 REMEMBER_KEPT = 500
@@ -153,7 +159,7 @@ class Settings:
         for timer in SIZED:
             size = (kept.get("sizes") or {}).get(timer) if isinstance(kept.get("sizes"), dict) else None
             if isinstance(size, int) and SIZE_MIN <= size <= SIZE_MAX:
-                settings.sizes[timer] = min(SIZE_MAX, size * size_factor)
+                settings.sizes[timer] = min(SIZE_MAX if size_factor == 1 else _V12_LARGEST, size * size_factor)
             colour = (kept.get("colours") or {}).get(timer) if isinstance(kept.get("colours"), dict) else None
             if colour in CLOCK_COLOURS:
                 settings.colours[timer] = colour
