@@ -27,6 +27,14 @@ or skips because one check-in was slower than the last; one that does not
 The clock can be popped out into a window that stays on top of every other,
 the slides included (``_HUB_JS``, ``openPip``): the browser's Document
 Picture-in-Picture, in Chrome and Edge on a computer (version 116 on).
+Chrome keeps one such window for the whole browser, every tab, window and
+profile, a video's picture-in-picture included (measured 2026-11-03; Edge
+keeps its own). So while another tab of the browser has it, a tab's button
+offers a plain pop-up instead, which any number of tabs may have but which
+other windows may cover; once the pop-out closes, the tabs without a pop-up
+offer it again (Terry, 2026-11-03; ``_POP_LOCK``). A pop-up outlives its
+tab: a tab reloaded takes it back, and one left without its tab says so
+(``_GONE_MS``).
 
 Sizes and the way the times are shown (Terry, 2026-11-01)
 ---------------------------------------------------------
@@ -40,7 +48,7 @@ pop-out starts at its panel's choice when it opens.
 
 What the browser keeps
 ----------------------
-Three cookies and two notes per tab:
+Three cookies and three notes per tab:
 - ``speakertime_recent``: the sessions this browser was in, most recent first;
 - ``speakertime_hosts``: the host's token of each session hosted from it (the
   last ``_HOSTS_KEPT``);
@@ -51,7 +59,9 @@ Three cookies and two notes per tab:
 - the tab's own random id, in its ``sessionStorage`` too
   (``speakertime_tabid``), so that the server can tell the host's own tab,
   reloaded, from another tab of the same browser, which holds the same
-  cookies (Terry, 2026-11-01: a host and a viewer in two tabs of one browser).
+  cookies (Terry, 2026-11-01: a host and a viewer in two tabs of one browser);
+- the name of the tab's pop-up while one is open (``speakertime_popup``),
+  so that the tab, reloaded, finds it again.
 A tab reloaded goes back to its own session (as host if it holds the token
 and no other page hosts it: Terry, 2026-10-30). A new window goes back by
 itself only when that leaves no doubt: the one session it would host, or
@@ -107,6 +117,8 @@ TAB_KEY = "speakertime_tab"
 """The tab's own session, in its sessionStorage."""
 TAB_ID_KEY = "speakertime_tabid"
 """The tab's own random id, in its sessionStorage."""
+POPUP_KEY = "speakertime_popup"
+"""The name of the tab's pop-up while one is open, in its sessionStorage: a tab reloaded finds it by that name."""
 
 _BROWSER_ID = re.compile(r"[A-Za-z0-9]{8,64}")
 """A browser's or a tab's id as the page's script makes one (``_READER_JS``); anything else is ignored."""
@@ -261,7 +273,13 @@ _SHARED_CSS = f"""
 .modes button.on {{ background: var(--text); color: var(--panel); }}
 """
 
-_PIP_HTML = "".join(_row(name, False) for name in ("elapsed", "remaining", "limit")) + _MODES_HTML
+_GONE_TEXT = "Its SpeakerTime tab has gone: close this window."
+"""Shown in a pop-up instead of the figures once its tab has stopped drawing them (closed, or reloaded and not back)."""
+
+_PIP_HTML = (
+    "".join(_row(name, False) for name in ("elapsed", "remaining", "limit")) + _MODES_HTML
+    + f'<div class="gone-note">{_GONE_TEXT}</div>'
+)
 
 _PIP_CSS = f"""
   html {{ height: 100%; }}
@@ -278,7 +296,39 @@ _PIP_CSS = f"""
     overflow: hidden; margin-top: 0.5vh; }}
   .modes button {{ font: inherit; font-size: max(10px, min(3.4vw, 4.2vh)); color: var(--text);
     background: transparent; border: 0; padding: 0.3vh 1.6vw; cursor: pointer; }}
+  .gone-note {{ display: none; font-size: max(14px, min(5vw, 7vh)); text-align: center; padding: 0 5vw; }}
+  body.gone .row, body.gone .modes {{ display: none; }}
+  body.gone .gone-note {{ display: block; }}
 """
+
+_GONE_MS = 3000
+"""A pop-up whose tab has not drawn it for this long shows _GONE_TEXT instead of the figures.
+
+A plain pop-up outlives its tab, its figures frozen where they were
+(measured 2026-11-03, Chrome: the tab reloaded or closed, the pop-up stayed
+open, its clock stopped), and a frozen clock looks like a live one. The
+pop-out (Document Picture-in-Picture) closes with its tab, so needs none.
+"""
+
+_WATCH_MS = 500
+"""How often a pop-up's own watchdog (_WATCH_JS) looks at when its tab last drew it."""
+
+# The watchdog, run in the pop-up's own window: the tab's timers and functions
+# stop with the tab, so it cannot be one of them. A round of its own that
+# comes late (the pop-up hidden behind other windows, its timers slowed with
+# the tab's drawing) judges nothing, so a pop-up brought to the front after a
+# while does not show the notice for a moment before the next draw.
+_WATCH_JS = f"""(() => {{
+  if (window.speakerTimeWatch) return;
+  window.speakerTimeWatch = true;
+  let last = Date.now();
+  setInterval(() => {{
+    const now = Date.now();
+    const late = now - last > 3 * {_WATCH_MS};
+    last = now;
+    if (!late) document.body.classList.toggle("gone", now - (window.speakerTimeBeat || 0) > {_GONE_MS});
+  }}, {_WATCH_MS});
+}})();"""
 
 _HUB_JS = f"""
 const DRAW_MS = {_DRAW_MS};
@@ -293,6 +343,8 @@ const DARK = {json.dumps(DARK)};
 const LIGHT = {json.dumps(LIGHT)};
 const PIP_HTML = {json.dumps(_PIP_HTML)};
 const PIP_CSS = {json.dumps(_PIP_CSS)};
+const WATCH_JS = {json.dumps(_WATCH_JS)};
+const POPUP_KEY = {json.dumps(POPUP_KEY)};
 
 // Whole seconds as a clock shows them: "4:05", "1:02:03", a minus sign before
 // a negative time. As timer.clock_text.
@@ -326,9 +378,13 @@ const hub = () => (window.speakerTime ??= {{
   panelTimer: null, // the page's one timer drawing it (_CLOCK_JS)
   send: null,       // the clock element's trigger, as the latest run gave it
   missing: 0,       // check-ins running that found it gone from the page (_SYNC_JS)
-  pip: null,        // the pop-out window, while open
+  pip: null,        // the pop-out window, or the pop-up, while open
+  popup: false,     // pip is a plain pop-up, not the pop-out kept on top
   opening: false,   // a pop-out asked for and not yet given
   pipOpenedAt: -Infinity,  // when the pop-out last opened (performance.now())
+  elsewhere: null,  // the session of the pop-out another tab of this browser holds ("" if it cannot say), or null
+  locksAt: -Infinity,      // when that was last looked at (performance.now())
+  adopted: false,   // this page has looked for its pop-up from before a reload
   pageMode: CLOCK,  // the panel's way of showing the times (the page's own switch)
   pipMode: CLOCK,   // the pop-out's (its own switch; the panel's when it opened)
   preview: {{}},     // the host's slider while dragged, before the size comes back from the server
@@ -437,24 +493,32 @@ const hub = () => (window.speakerTime ??= {{
     for (const button of root.querySelectorAll(".modes button")) button.classList.toggle("on", button.dataset.m === mode);
   }},
 
-  // The pop-out: drawn and timed from its own window, which stays on top, with
-  // its own switch, starting at the panel's choice.
-  openPip(win) {{
+  // The pop-out (popup false), or a plain pop-up (true): drawn and timed from
+  // its own window, with its own switch, starting at the panel's choice. The
+  // pop-out stays on top; a pop-up does not, and outlives its tab, so it has
+  // a watchdog of its own (_WATCH_JS), and a tab reloaded takes it back
+  // (adopt): laid out again here, its old style replaced.
+  openPip(win, popup) {{
     const h = this;
     h.pipMode = h.pageMode;
-    win.document.title = "SpeakerTime";
-    const style = win.document.createElement("style");
+    const doc = win.document;
+    doc.title = "SpeakerTime";
+    doc.head.querySelector("style[data-speakertime]")?.remove();
+    const style = doc.createElement("style");
+    style.dataset.speakertime = "1";
     style.textContent = PIP_CSS;
-    win.document.head.appendChild(style);
-    win.document.body.innerHTML = PIP_HTML;
-    for (const button of win.document.querySelectorAll(".modes button")) {{
+    doc.head.appendChild(style);
+    doc.body.innerHTML = PIP_HTML;
+    for (const button of doc.querySelectorAll(".modes button")) {{
       button.addEventListener("click", () => {{
         h.pipMode = button.dataset.m;
-        h.draw(win.document, h.pipMode);
+        h.draw(doc, h.pipMode);
       }});
     }}
     const tick = () => {{
-      h.draw(win.document, h.pipMode);
+      win.speakerTimeBeat = Date.now();
+      doc.body.classList.remove("gone");
+      h.draw(doc, h.pipMode);
       const now = performance.now();
       if (h.kick !== null && now - h.lastSync > KICK_AFTER_MS && now - h.lastKick > KICK_AFTER_MS) {{
         h.lastKick = now;
@@ -463,9 +527,22 @@ const hub = () => (window.speakerTime ??= {{
     }};
     tick();
     win.setInterval(tick, DRAW_MS);
-    win.addEventListener("pagehide", () => {{ if (h.pip === win) h.pip = null; }});
+    if (popup) {{
+      const watch = doc.createElement("script");  // made in the pop-up's document, so run by its window
+      watch.textContent = WATCH_JS;
+      doc.head.appendChild(watch);
+    }}
+    win.addEventListener("pagehide", () => {{ if (h.pip === win) h.closed(); }});
     h.pip = win;
+    h.popup = popup;
     h.pipOpenedAt = performance.now();
+  }},
+
+  // The pop-out or pop-up has closed.
+  closed() {{
+    this.pip = null;
+    this.popup = false;
+    try {{ sessionStorage.removeItem(POPUP_KEY); }} catch (error) {{}}
   }},
 }});
 """
@@ -474,6 +551,7 @@ _CLOCK_HTML = (
     '<div class="clock">'
     + "".join(_row(name, name in SIZED) for name in ("elapsed", "remaining", "limit"))
     + f'<div class="tools">{_MODES_HTML}<button class="pop" type="button" hidden></button></div>'
+    + '<div class="why" hidden></div>'
     + '<div class="note" hidden></div>'
     + "</div>"
 )
@@ -513,11 +591,36 @@ _CLOCK_CSS = f"""
   border: 1px solid var(--line); border-radius: 8px; padding: 4px 12px; cursor: pointer;
 }}
 .pop:hover {{ border-color: var(--text); }}
-.note {{ font-size: 13px; text-align: center; margin-top: 6px; }}
+.note, .why {{ font-size: 13px; text-align: center; margin-top: 6px; }}
 """
 
 _POP_OPEN = "Pop out (stays on top)"
 _POP_CLOSE = "Close the pop-out"
+_POPUP_OPEN = "Pop-up (may get obscured)"
+_POPUP_CLOSE = "Close the pop-up"
+_ELSEWHERE = "Another tab of this browser has the on-top pop-out{of}. The browser allows one at a time."
+"""Under the button while it offers a pop-up; {of} is " (session ID)", or nothing when the other tab's session is not known."""
+_POPUP_BLOCKED = "The pop-up was blocked: allow pop-ups for this site in the browser."
+
+_POP_LOCK = "speakertime-popout"
+"""The lock (Web Locks) a tab holds while its pop-out is open, so other tabs of the browser offer a pop-up instead.
+
+Terry (2026-11-03): Chrome keeps one pop-out at a time for the whole
+browser, so a tab finding one open labels its button for a plain pop-up,
+not kept on top; once the pop-out closes, the tabs without a pop-up offer
+the pop-out again, until one of them takes it. The lock is asked for
+before the pop-out, and only if free, so the first press wins (measured
+2026-11-03: two tabs pressed together, one had it). The browser frees a
+lock when its tab goes, however it goes, so no tab can leave it held
+(measured: a tab closed with no pagehide). Only this browser profile's
+tabs of this site see it: another profile, an Incognito window, or another
+site's picture-in-picture still closes the pop-out unseen.
+"""
+_POP_LOCK_OF = "speakertime-popout-of "
+"""Held with _POP_LOCK, its name ending in the session's ID, for the other tabs' note."""
+_LOCKS_MS = 1000
+"""How often a tab looks at the locks held: a closed pop-out is offered again within about this long."""
+_POPUP_FEATURES = "popup,width=340,height=280"
 
 _LOST_AFTER = 2
 """Check-ins running that find the clock gone from the page before the page is asked for again (Streamlit's whole run).
@@ -534,10 +637,10 @@ _POP_GUARD_MS = 1000
 """A click on the pop-out's button this soon after the pop-out opened is ignored: a double click would close it at once.
 
 Terry (2026-11-01) saw a pop-out "appear then immediately disappear". Two
-causes are possible and both are dealt with or told: a double click (this),
-and a second pop-out opened from another tab or window of the same browser,
-which Chrome allows one of at a time, closing the first (measured
-2026-11-03; the README says so).
+causes are possible and both are dealt with: a double click (this), and a
+second pop-out opened from another tab or window of the same browser, which
+Chrome allows one of at a time, closing the first (measured 2026-11-03):
+another tab of this browser now offers a pop-up instead (_POP_LOCK).
 """
 
 _CLOCK_JS = (
@@ -545,7 +648,16 @@ _CLOCK_JS = (
     + f"""
 const POP_OPEN = {json.dumps(_POP_OPEN)};
 const POP_CLOSE = {json.dumps(_POP_CLOSE)};
+const POPUP_OPEN = {json.dumps(_POPUP_OPEN)};
+const POPUP_CLOSE = {json.dumps(_POPUP_CLOSE)};
+const ELSEWHERE = {json.dumps(_ELSEWHERE)};
+const POPUP_BLOCKED = {json.dumps(_POPUP_BLOCKED)};
 const POP_GUARD_MS = {_POP_GUARD_MS};
+const POP_LOCK = {json.dumps(_POP_LOCK)};
+const POP_LOCK_OF = {json.dumps(_POP_LOCK_OF)};
+const LOCKS_MS = {_LOCKS_MS};
+const POPUP_FEATURES = {json.dumps(_POPUP_FEATURES)};
+const PIP_SIZE = {{ width: 340, height: 280 }};
 
 // The Document Picture-in-Picture API of the top window: a pop-out may be
 // opened only from a top-level page (Chrome: "only allowed from a top-level
@@ -561,15 +673,105 @@ const pipApi = () => {{
   }}
 }};
 
+// Whether another tab of this browser holds the pop-out (POP_LOCK), looked at
+// every LOCKS_MS: h.elsewhere, its session ("" if it cannot say), or null.
+const lookElsewhere = (h) => {{
+  const now = performance.now();
+  if (!navigator.locks || now - h.locksAt < LOCKS_MS) return;
+  h.locksAt = now;
+  navigator.locks.query().then((state) => {{
+    const names = state.held.map((lock) => lock.name);
+    if (!names.includes(POP_LOCK) || (h.pip !== null && !h.popup)) {{
+      h.elsewhere = null;
+      return;
+    }}
+    const of = names.find((name) => name.startsWith(POP_LOCK_OF));
+    h.elsewhere = of === undefined ? "" : of.slice(POP_LOCK_OF.length);
+  }}, () => {{}});
+}};
+
 // The panel as it is now (h.clock, the element last laid out): drawn every
-// DRAW_MS by the page's one timer.
+// DRAW_MS by the page's one timer, with the pop button's label and note.
 const drawPanel = (h) => {{
   const root = h.clock;
   if (root === null || !root.isConnected) return;
   h.draw(root, h.pageMode);
+  lookElsewhere(h);
+  if (h.pip !== null && h.pip.closed) h.closed();  // its pagehide missed
   const pop = root.querySelector(".pop");
-  const label = h.pip !== null ? POP_CLOSE : POP_OPEN;
+  const label = h.pip !== null ? (h.popup ? POPUP_CLOSE : POP_CLOSE) : h.elsewhere !== null ? POPUP_OPEN : POP_OPEN;
   if (pop.textContent !== label) pop.textContent = label;
+  const why = root.querySelector(".why");
+  const text = pop.hidden || label !== POPUP_OPEN ? ""
+    : ELSEWHERE.replace("{{of}}", h.elsewhere ? " (session " + h.elsewhere + ")" : "");
+  if (why.textContent !== text) why.textContent = text;
+  why.hidden = text === "";
+}};
+
+// The pop-out, if no other tab of this browser holds it: the lock is asked
+// for first, and only if free, so the first of several presses wins. True
+// once open, false if another tab holds it. Both locks are held until the
+// pop-out closes (its pagehide), or the browser frees them with the tab.
+const claim = (h, api) => new Promise((resolve, reject) => {{
+  // Gives {{ closed }}, not the promise itself, which an await would wait out.
+  const open = async () => {{
+    const win = await api.requestWindow(PIP_SIZE);
+    const closed = new Promise((done) => win.addEventListener("pagehide", done));
+    h.openPip(win, false);
+    return {{ closed }};
+  }};
+  if (!navigator.locks) {{
+    open().then(() => resolve(true), reject);
+    return;
+  }}
+  navigator.locks.request(POP_LOCK, {{ ifAvailable: true }}, async (lock) => {{
+    if (lock === null) {{
+      resolve(false);
+      return;
+    }}
+    let pip;
+    try {{
+      pip = await open();
+    }} catch (error) {{
+      reject(error);
+      return;
+    }}
+    resolve(true);
+    await navigator.locks.request(POP_LOCK_OF + (h.base?.sid ?? ""), () => pip.closed);
+  }}).catch(reject);
+}});
+
+// A plain pop-up, not kept on top: any number of tabs may have one. Its name
+// is kept in the tab's sessionStorage, for adopt.
+const openPopup = (h, note) => {{
+  const name = "speakertime_popup_" + Math.random().toString(36).slice(2, 10);
+  const win = window.top.open("", name, POPUP_FEATURES);
+  if (win === null) {{
+    note.textContent = POPUP_BLOCKED;
+    note.hidden = false;
+    return;
+  }}
+  try {{ sessionStorage.setItem(POPUP_KEY, name); }} catch (error) {{}}
+  h.openPip(win, true);
+}};
+
+// A tab reloaded takes back the pop-up it had: a plain window outlives its
+// tab, frozen, and is found again by its name with no click needed
+// (measured 2026-11-03, Chrome). If it was closed meanwhile, the name opens
+// a new, empty window instead (where pop-ups are allowed): closed at once.
+const adopt = (h) => {{
+  h.adopted = true;
+  let name = null;
+  try {{ name = sessionStorage.getItem(POPUP_KEY); }} catch (error) {{}}
+  if (name === null || h.pip !== null) return;
+  let win = null;
+  try {{ win = window.top.open("", name, POPUP_FEATURES); }} catch (error) {{}}
+  if (win !== null && win.document.querySelector(".gone-note") !== null) {{
+    h.openPip(win, true);
+    return;
+  }}
+  if (win !== null) win.close();
+  h.closed();
 }};
 
 // Called again with each run's data (Streamlit 1.64 components v2), on the
@@ -600,6 +802,7 @@ export default function (component) {{
     root.dataset.wired = "1";
     wire(h, root);
   }}
+  if (!h.adopted) adopt(h);
   drawPanel(h);
 }}
 
@@ -652,7 +855,8 @@ function wire(h, root) {{
       }}
       h.opening = true;
       try {{
-        h.openPip(await api.requestWindow({{ width: 340, height: 280 }}));
+        // The pop-out if no other tab holds it, whatever the label said a moment ago; else a pop-up.
+        if (!(await claim(h, api))) openPopup(h, note);
       }} catch (error) {{
         note.textContent = "The pop-out could not be opened: " + error.message;
         note.hidden = false;
