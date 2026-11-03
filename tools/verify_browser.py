@@ -106,6 +106,34 @@ _WIDTHS = """() => {
            others: kids.filter(k => !k.classList.contains('st-key-clock')).map(width) };
 }"""
 
+# The panel's width, how far off centre it stands in its element, and "12:34:56" at 800 (eight units) set in
+# Remaining's column: its size in px (shrunk if the column were too narrow) and its width beside the column's.
+_PANEL_WIDTH = f"""() => {{
+  const r = {_CLOCK_ROOT};
+  const panel = r.querySelector('.clock').getBoundingClientRect(), outer = r.host.getBoundingClientRect();
+  const cell = r.querySelector('[data-v="remaining"]').closest('.cell');
+  const probe = document.createElement('span');
+  probe.className = 'value';
+  probe.style.setProperty('--scale', '8');
+  probe.style.setProperty('--chars', '8');
+  probe.textContent = '12:34:56';
+  cell.appendChild(probe);
+  const out = {{ width: Math.round(panel.width), off: Math.round((panel.left - outer.left) - (outer.right - panel.right)),
+                 column: Math.round(cell.getBoundingClientRect().width), probePx: parseFloat(getComputedStyle(probe).fontSize),
+                 probeWidth: Math.round(probe.getBoundingClientRect().width) }};
+  probe.remove();
+  return out;
+}}"""
+
+# The Time Limit and the Time Left Warning: the space between them, their limit label's size, and how far off the
+# middle of their row the two stand together, on a panel (``root`` the clock's shadow root) or a pop-out (its document).
+_GROUPED = """(root) => {
+  const cell = (n) => root.querySelector('[data-v="' + n + '"]').closest('.cell').getBoundingClientRect();
+  const l = cell('limit'), w = cell('warning'), p = root.querySelector('.pair').getBoundingClientRect();
+  return { gap: +(w.left - l.right).toFixed(1), label: parseFloat(getComputedStyle(root.querySelector('[data-l="limit"]')).fontSize),
+           off: +((l.left + w.right) / 2 - (p.left + p.right) / 2).toFixed(1) };
+}"""
+
 _COUNT_CHECK_INS = """async (kicks) => {
   const h = window.speakerTime;
   let n = 0;
@@ -367,8 +395,8 @@ def run(url: str, launch: dict, shots: Path | None) -> None:
             ok("stopped, each check-in reaches the script (about 4 in 4 s)", 3 <= alone["checkIns"] <= 6 and alone["clockKept"], alone)
             ok("the kick brings more, the clock kept", kicked["checkIns"] > alone["checkIns"] + 3 and kicked["clockKept"], kicked)
 
-            sizes_and_modes(a, b, c, pip, shot)
-            colours_and_warning(a, c)
+            a_pip = sizes_and_modes(a, b, c, pip, shot)
+            colours_and_warning(a, c, a_pip)
         windows_of_one_browser(browser, errors)
         popups_of_one_browser(browser, errors, shot)
 
@@ -423,10 +451,10 @@ def wide_and_low(c: Page, pip: Page, shot) -> None:
         c.wait_for_timeout(2500)
 
 
-def sizes_and_modes(a: Page, b: Page, c: Page, pip: Page, shot) -> None:
+def sizes_and_modes(a: Page, b: Page, c: Page, pip: Page, shot) -> Page:
     """12-13. The host's sliders reach every panel and pop-out; each panel's and pop-out's switch is its own (2026-11-01).
 
-    On entry C hosts TALK1 with its pop-out open, A views it, B is on the start screen.
+    On entry C hosts TALK1 with its pop-out open, A views it, B is on the start screen. Gives A's pop-out, left open.
     """
     # 12. Sizes: the host's alone; Elapsed set to 100 (half the default 200) halves it on a viewer's panel and in the
     # pop-out, Remaining kept; Remaining at 300 and 400 grows by each step: the whole range takes effect (Terry, 2026-11-03).
@@ -468,6 +496,18 @@ def sizes_and_modes(a: Page, b: Page, c: Page, pip: Page, shot) -> None:
        [wide_400, wide_800, pip_400, pip_800])
     ok("the clock spans the wide page, everything else keeps its column (704 px)",
        widths["clock"] > 1400 and max(widths["others"]) <= 704, widths)
+    # v1.8 (Terry, 2026-11-03): no wider than "HH:MM:SS" needs at 800, so a window of 2800 px leaves it centred:
+    # a figures' column of 2223 px (8 characters at 0.62 em, at 8 units of 56 px) with 8 px of padding each side,
+    # and on the host's panel 56 px more each side for the sliders and colour buttons.
+    for page, who, expected in ((a, "a viewer's", 2239), (c, "the host's", 2351)):
+        size = page.viewport_size
+        page.set_viewport_size({"width": 2800, "height": 900})
+        page.wait_for_timeout(800)
+        seen = on_clock(page, _PANEL_WIDTH)
+        ok(f"{who} panel in a window of 2800 px: {expected} px, centred; 12:34:56 at 800 fits its column unshrunk",
+           abs(seen["width"] - expected) <= 1 and abs(seen["off"]) <= 1 and seen["column"] == 2223
+           and seen["probePx"] == 448 and seen["probeWidth"] <= seen["column"], seen)
+        page.set_viewport_size(size)
     on_clock(c, _SLIDE, ["remaining", 400])
     c.wait_for_timeout(2500)
     a.set_viewport_size({"width": 800, "height": 900})
@@ -513,6 +553,7 @@ def sizes_and_modes(a: Page, b: Page, c: Page, pip: Page, shot) -> None:
     on_clock(a, _SWITCH, "clock")
     a.wait_for_timeout(1500)
     ok("then keeps its own", (viewer_pip.evaluate(_POPOUT)["mode"], mode_of(a)) == ("minutes", "clock"))
+    return viewer_pip
 
 
 def rgb(hex_colour: str) -> str:
@@ -539,10 +580,10 @@ _PICK = """(name) => [...document.querySelectorAll('*')].find(e => e.shadowRoot 
   .shadowRoot.querySelector('.picks button[data-c="' + name + '"]').click()"""
 
 
-def colours_and_warning(a: Page, c: Page) -> None:
+def colours_and_warning(a: Page, c: Page, a_pip: Page) -> None:
     """16-17. The host's colour buttons and Terry's rule for black and white; the Time Left Warning and its colour (2026-11-01).
 
-    On entry C hosts TALK1 (Time Limit 2.3 minutes, stopped part way), A views it.
+    On entry C hosts TALK1 (Time Limit 2.3 minutes, stopped part way), A views it, its pop-out (a_pip) open.
     """
     ok("colour buttons beside the host's sliders, none for a viewer",
        (on_clock(c, _PAINT)["swatches"], on_clock(a, _PAINT)["swatches"]) == (["elapsed", "remaining"], []))
@@ -574,6 +615,11 @@ def colours_and_warning(a: Page, c: Page) -> None:
     ok("a warning set: shown beside the limit, in the colour opposite orange; Remaining in it",
        (seen["warningShown"], seen["warningText"], seen["warningColour"], seen["warn"], seen["remaining"])
        == (True, "2:18", rgb(complement(CLOCK_COLOURS["orange"])), True, rgb(complement(CLOCK_COLOURS["orange"]))), seen)
+    # v1.8 (Terry, 2026-11-03): the two stand together in the middle, as the switch's buttons do, two of their labels'
+    # heights apart, on a panel and in a pop-out (each took half the width until v1.7).
+    grouped = [on_clock(a, f"() => ({_GROUPED})({_CLOCK_ROOT})"), a_pip.evaluate(f"() => ({_GROUPED})(document)")]
+    ok("the Time Limit and the warning together in the middle, on a viewer's panel and in its pop-out",
+       all(abs(g["gap"] - 2 * g["label"]) <= 1 and abs(g["off"]) <= 1 for g in grouped), grouped)
     picks = settled(lambda: c.evaluate(_PICKS)[0], ["auto", True])
     ok("the warning's colour buttons: A chosen, then four", picks == ["auto", True] and len(c.evaluate(_PICKS)) == 5, c.evaluate(_PICKS))
     c.evaluate(_PICK, "cyan")
