@@ -85,10 +85,19 @@ A web page cannot make itself open in a window of its own, but the browser can:
   just the timers. It stays above every other window, the slides included,
   and can be resized. This needs Chrome or Edge on a computer (version 116 or
   later). The page that opened it must stay open, but it can be hidden behind
-  other windows. A browser keeps one pop-out at a time: opening one from
-  another tab or window of the same browser closes the first.
+  other windows.
+- Chrome keeps **one** such pop-out for the whole browser: every tab, window
+  and profile, Incognito too, and a video's picture-in-picture (YouTube, or
+  another site's pop-out) closes it. Edge keeps its own, so Chrome and Edge
+  side by side can have one each. While another tab of the same browser has
+  the pop-out, a tab's button reads **Pop-up (may get obscured)**: a small
+  window like the pop-out, which any number of tabs may have, but which other
+  windows can cover. Once the pop-out closes, the tabs without a pop-up offer
+  it again, and the first to press it has it. A pop-up stays open if its tab
+  is closed, and then says so instead of showing the timers; a tab that is
+  reloaded takes its pop-up back.
 - Or, on Windows, Microsoft PowerToys' *Always On Top* (Win+Ctrl+T) keeps any
-  window on top, including an installed app's.
+  window on top, including an installed app's or a pop-up.
 
 ## Running it
 
