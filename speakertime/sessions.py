@@ -42,6 +42,8 @@ The rules (Terry, 2026-10-30):
 - (Terry, 2026-11-01, item 11) Once everyone has left a session and it has
   gone, its latest settings are remembered: Create New Session under its ID
   starts from them (``Settings``).
+- (Terry, 2026-11-03) The host alone has a Buzzer: while it is held, every
+  page shows it (``buzz``). It is no setting, so it is never remembered.
 """
 
 from __future__ import annotations
@@ -124,6 +126,14 @@ REMEMBER_FILE = Path(os.environ.get("SPEAKERTIME_REMEMBER") or Path(__file__).re
 
 REMOTE_RETRY_S = 60.0
 """After the gist could not be read, the soonest ``Registry.use_remote`` tries it again."""
+
+BUZZ_HOLD_S = 15.0
+"""A Buzzer held stops by itself this long after the host's page last said it was held.
+
+So a page that closes or loses its connection with the button down cannot
+leave it sounding. While the button is held the page says so again every
+5 s (``web``), so a hold of any length goes on.
+"""
 
 
 class Refused(Exception):
@@ -211,6 +221,8 @@ class Session:
     """The Time Left Warning in minutes, to a tenth; None (blank), 0 or less mean none."""
     warning_colour: str = AUTO
     """The warning's colour: AUTO (Terry's rule) or a name of ``colours.WARNING_CANDIDATES``."""
+    buzz_until: float = 0.0
+    """While the clock is before this, the host's Buzzer is held (``Registry.buzz``)."""
 
     def settings(self) -> Settings:
         """What the host has set, as remembered (``Settings``)."""
@@ -254,6 +266,8 @@ class Shown:
     """The Time Left Warning in minutes; None for none."""
     warning_colour: str
     """The warning's colour as chosen: AUTO or a name of ``colours.WARNING_CANDIDATES``."""
+    buzzing: bool
+    """Whether the host's Buzzer is held."""
 
     def for_script(self) -> dict[str, object]:
         """What the page's script needs to run the clock (``web._HUB_JS``): the limit and the warning in whole seconds (None for none), and the colours as drawn."""
@@ -263,6 +277,7 @@ class Shown:
             "limit": limit_seconds(self.limit),
             "warning": limit_seconds(self.warning),
             "version": self.version,
+            "buzz": self.buzzing,
             "sizes": dict(self.sizes),
             "look": {
                 "theme": self.theme,
@@ -519,6 +534,7 @@ class Registry:
         session.host_seen = now
         session.token = token or _new_token()
         session.viewers.pop(page, None)
+        session.buzz_until = 0.0  # a page that has just become the host holds no Buzzer
         if mode in MODES:
             session.host_mode = mode
         session.host_epoch += 1
@@ -551,6 +567,7 @@ class Registry:
             theme=session.theme,
             warning=session.warning,
             warning_colour=session.warning_colour,
+            buzzing=now < session.buzz_until,
         )
 
     # -- what pages do ------------------------------------------------------
@@ -711,6 +728,7 @@ class Registry:
             session.browsers.pop(page, None)
             if session.host == page:
                 session.host = None
+                session.buzz_until = 0.0
                 session.version += 1
 
     def control(self, sid: str, page: str, action: str, value: float | None = None) -> None:
@@ -743,6 +761,24 @@ class Registry:
                 session.version += 1
                 if action in ("limit", "warning"):
                     self._remember(session)
+
+    def buzz(self, sid: str, page: str, on: bool) -> None:
+        """The host's Buzzer held (``on``) or let go. Refused for a page that does not host ``sid``.
+
+        Held, it stops by itself BUZZ_HOLD_S after the last word that it is
+        held, which the host's page sends again while it is. Every page is told
+        when it starts or stops (a new version); a stop by itself changes no
+        version, so the pages take it from each check-in (``web``).
+        """
+        with self._lock:
+            now = self._clock()
+            session = self._host_session(sid, page)
+            was = now < session.buzz_until
+            session.buzz_until = now + BUZZ_HOLD_S if on else 0.0
+            session.host_seen = now
+            session.attended = now
+            if was != bool(on):
+                session.version += 1
 
     def set_size(self, sid: str, page: str, timer: str, percent: object) -> None:
         """The host's slider beside a timer: its size for every page, in percent. Refused for a page that does not host ``sid``.

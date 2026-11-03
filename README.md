@@ -44,6 +44,19 @@ Time Remaining is white or black, and otherwise the colour opposite Time
 Remaining's on the colour wheel (the **A** button); the four buttons after it
 are other colours to choose instead.
 
+**Buzzer** (v1.10): on the host's panel only, beside Pop out. While the host
+holds it down (the mouse button, a finger, or Space or Enter on it), Time
+Remaining reads **BUZZ** in steady red on every panel and pop-out, the
+host's included, and a buzzer sounds on every viewer's page (not the
+host's). Let go, everything is as before. It stops by itself 15 seconds
+after the host's page last said it was held, so a page that loses its
+connection with the button down cannot leave it sounding. A browser lets a
+page make a sound only once someone has clicked it, or pressed a key on it,
+since it loaded. A viewer who pressed Connect to Session has done that; a
+viewer's page that reconnected by itself after a reload has not, and says
+so under its clock: "Click anywhere on this page once so that it can sound
+the buzzer."
+
 **H:MM:SS or MMM.M**: the switch under the timers shows them as hours, minutes
 and seconds, or as minutes to a tenth ("12.5"). Every panel and every pop-out
 has its own switch. A panel starts at the host's choice when it opens, and
