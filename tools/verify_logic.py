@@ -15,6 +15,7 @@ import sys
 import tempfile
 import threading
 import time
+from dataclasses import asdict
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -22,7 +23,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from speakertime import colours, ids  # noqa: E402
 from speakertime.colours import BLACK, DARK, LIGHT, WHITE  # noqa: E402
 from speakertime.sessions import (  # noqa: E402
-    EXPIRE_AFTER_S, HOST, HOST_GRACE_S, REMOTE_RETRY_S, SIZE_DEFAULT, SIZE_MAX, SIZE_MIN, VIEWER, Refused, Registry, Settings,
+    BUZZ_HOLD_S, EXPIRE_AFTER_S, HOST, HOST_GRACE_S, REMOTE_RETRY_S, SIZE_DEFAULT, SIZE_MAX, SIZE_MIN, VIEWER, Refused, Registry,
+    Settings,
 )
 from speakertime.store import GIST_DESCRIPTION, GIST_FILE, GistStore  # noqa: E402
 from speakertime.timer import (  # noqa: E402
@@ -664,6 +666,39 @@ def remote_checks() -> None:
     hub.shutdown()
 
 
+def buzzer_checks() -> None:
+    """v1.10: the host's Buzzer, held: every page shows it; let go, or no word from the host's page for BUZZ_HOLD_S, it stops (Terry, 2026-11-03)."""
+    clock = Clock()
+    on = {"H", "V"}
+    reg = Registry(clock=clock, connected=lambda page: page in on)
+    reg.create("BZ", "H")
+    reg.join("BZ", "V", None)
+    check("not buzzing at first", reg.shown("BZ").buzzing, False)
+    before = reg.shown("BZ").version
+    reg.buzz("BZ", "H", True)
+    check("held: buzzing, for the script too, and every page told (a new version)",
+          (reg.shown("BZ").buzzing, reg.shown("BZ").for_script()["buzz"], reg.shown("BZ").version > before), (True, True, True))
+    try:
+        reg.buzz("BZ", "V", True)
+        refused = False
+    except Refused:
+        refused = True
+    check("a viewer cannot buzz", refused, True)
+    clock.step(BUZZ_HOLD_S - 1)
+    reg.buzz("BZ", "H", True)  # the host's page, still holding it, says so again
+    clock.step(BUZZ_HOLD_S - 1)
+    check("said again while held: still buzzing", reg.shown("BZ").buzzing, True)
+    reg.buzz("BZ", "H", False)
+    check("let go: stopped", reg.shown("BZ").buzzing, False)
+    reg.buzz("BZ", "H", True)
+    clock.step(BUZZ_HOLD_S + 0.5)
+    check("no word from the host's page for BUZZ_HOLD_S: stopped by itself", reg.shown("BZ").buzzing, False)
+    reg.buzz("BZ", "H", True)
+    reg.leave("BZ", "H")
+    check("the host leaves while holding it: stopped", reg.shown("BZ").buzzing, False)
+    check("never remembered with the settings", "buzz" in json.dumps(asdict(reg.remembered("BZ"))), False)
+
+
 def main() -> int:
     timer_checks()
     id_checks()
@@ -673,6 +708,7 @@ def main() -> int:
     colour_checks()
     remember_checks()
     remote_checks()
+    buzzer_checks()
     for failure in FAILURES:
         print("FAIL", failure)
     print(f"{COUNT - len(FAILURES)} of {COUNT} checks passed")
