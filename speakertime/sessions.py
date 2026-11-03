@@ -5,8 +5,11 @@ app), each page in a thread of its own, so a table in this module behind one
 lock is what the host's page and every viewer's page see. The sessions
 themselves are not written to disk: a restart of the app (a reboot, a push,
 a sleep after 12 hours without visitors) ends every session. Their settings
-are (``Settings``, ``REMEMBER_FILE``), so a session started again under its
-ID starts from them (Terry, 2026-11-01, item 11).
+are kept, so a session started again under its ID starts from them (Terry,
+2026-11-01, item 11; ``Settings``): in a file beside the program
+(``REMEMBER_FILE``), which lasts only as long as the machine (on Community
+Cloud a Reboot starts a new one: measured 2026-11-03), and, when the app has
+a token for one, in a gist as well, which outlasts it (``store``, v1.9).
 
 Nothing here imports Streamlit. A page is named by an id the caller gives
 (the page's Streamlit session id), and the caller passes in a way to ask
@@ -57,6 +60,7 @@ from . import ids
 from .colours import (
     AUTO, CLOCK_COLOURS, DARK, DEFAULT_COLOUR, LIGHT, WARNING_CANDIDATES, choose, warning_choices, warning_colour,
 )
+from .store import GistStore, StoreError
 from .timer import CLOCK, MODES, Timer, limit_minutes, limit_seconds
 
 HOST_GRACE_S = 10.0
@@ -117,6 +121,9 @@ _REPLACE_PAUSES = (0.05, 0.1, 0.2, None)
 
 REMEMBER_FILE = Path(os.environ.get("SPEAKERTIME_REMEMBER") or Path(__file__).resolve().parents[1] / "remembered_sessions.json")
 """Where the settings are kept between runs of the app: beside the program (left out of git), or the file named by SPEAKERTIME_REMEMBER (the checks use their own)."""
+
+REMOTE_RETRY_S = 60.0
+"""After the gist could not be read, the soonest ``Registry.use_remote`` tries it again."""
 
 
 class Refused(Exception):
@@ -309,6 +316,11 @@ class Registry:
         self._clock = clock
         self._connected = connected or (lambda _page: None)
         self._store = store
+        self._written = 0.0
+        """When the table of settings was last written (the wall clock: it is compared across machines)."""
+        self._remote: GistStore | None = None
+        self._remote_next = 0.0
+        """When ``use_remote`` may try the gist again after it could not be read (this registry's clock)."""
         self._remembered: dict[str, Settings] = self._load()
 
     def set_connected(self, connected: Callable[[str], bool | None]) -> None:
@@ -322,7 +334,22 @@ class Registry:
         if self._store is None or not self._store.is_file():
             return {}
         try:
-            kept = json.loads(self._store.read_text(encoding="utf-8"))
+            text = self._store.read_text(encoding="utf-8")
+        except OSError as problem:
+            print(f"Warning: the remembered settings in {self._store} could not be read ({problem}); starting without them.",
+                  file=sys.stderr)
+            return {}
+        table = self._parse(text, str(self._store))
+        if table is None:
+            return {}
+        self._written = table[0]
+        return table[1]
+
+    @staticmethod
+    def _parse(text: str, where: str) -> tuple[float, dict[str, Settings]] | None:
+        """A table of settings as written (``_table_text``): when it was written, and each session's, checked; None, said so, if spoilt."""
+        try:
+            kept = json.loads(text)
             if not isinstance(kept, dict):
                 raise ValueError("not a table of sessions")
             # v1.2 wrote the table of sessions itself, its sizes on a scale half
@@ -331,12 +358,76 @@ class Registry:
             sessions = kept.get("sessions") if factor == 1 else kept
             if not isinstance(sessions, dict):
                 raise ValueError("no table of sessions")
-        except (OSError, ValueError) as problem:
-            print(f"Warning: the remembered settings in {self._store} could not be read ({problem}); starting without them.",
+        except ValueError as problem:
+            print(f"Warning: the remembered settings in {where} could not be read ({problem}); starting without them.",
                   file=sys.stderr)
-            return {}
-        return {sid: Settings.read(settings, factor) for sid, settings in sessions.items()
-                if isinstance(sid, str) and ids.normalized(sid) == sid and not ids.problem(sid)}
+            return None
+        written = kept.get("written") if factor == 1 else None
+        return (float(written) if isinstance(written, (int, float)) else 0.0,
+                {sid: Settings.read(settings, factor) for sid, settings in sessions.items()
+                 if isinstance(sid, str) and ids.normalized(sid) == sid and not ids.problem(sid)})
+
+    def _table_text(self) -> str:
+        return json.dumps({"format": STORE_FORMAT, "written": self._written,
+                           "sessions": {sid: asdict(s) for sid, s in self._remembered.items()}}, indent=1)
+
+    def has_remote(self) -> bool:
+        """Whether the settings are kept in a gist as well (``use_remote``)."""
+        return self._remote is not None
+
+    def remote_written(self, timeout: float) -> bool:
+        """Wait up to ``timeout`` seconds for the gist to hold the latest table; whether it does (for the checks)."""
+        return self._remote is None or self._remote.flush(timeout)
+
+    def use_remote(self, remote: GistStore) -> None:
+        """Keep the settings in ``remote`` as well (v1.9), starting from its table and the file's together.
+
+        Read once; where it cannot be read, nothing is written to it either
+        (that would put this machine's table, perhaps empty after a Reboot,
+        in place of the one kept there), and the next call at least
+        REMOTE_RETRY_S later tries again. The two tables are merged: a
+        session in both takes the newer table's settings (a write to the
+        gist may still have been waiting when the app restarted on the same
+        machine), a session already running keeps its own, and no session
+        in either is dropped. Whichever of the two lacks the result is
+        brought up to it.
+        """
+        with self._lock:
+            if self._remote is not None or self._clock() < self._remote_next:
+                return
+            self._remote_next = self._clock() + REMOTE_RETRY_S
+        try:
+            text = remote.load()
+        except StoreError as problem:
+            print(f"Warning: the remembered settings could not be read from the gist ({problem}); "
+                  f"trying again in {REMOTE_RETRY_S:.0f} s.", file=sys.stderr)
+            return
+        table = None if text is None else self._parse(text, "the gist")
+        with self._lock:
+            if self._remote is not None:
+                return
+            self._remote = remote
+            kept = table[1] if table is not None else {}
+            if table is not None and table[0] >= self._written:
+                newer, older = kept, self._remembered
+            else:
+                newer, older = self._remembered, kept
+            merged = {sid: settings for sid, settings in older.items() if sid not in newer}
+            merged.update(newer)
+            for sid in self._sessions:  # a session already running keeps its own, as the latest
+                if sid in self._remembered:
+                    merged.pop(sid, None)
+                    merged[sid] = self._remembered[sid]
+            while len(merged) > REMEMBER_KEPT:
+                del merged[next(iter(merged))]
+            file_behind, gist_behind = merged != self._remembered, merged != kept
+            self._remembered = merged
+            if gist_behind:
+                self._written = time.time()
+                self._write_table()
+            elif file_behind:
+                self._written = table[0]
+                self._write_file()
 
     def _remember(self, session: Session) -> None:
         """Keep ``session``'s settings as its latest (and write them to the store): called under the lock at every change of them."""
@@ -344,12 +435,21 @@ class Registry:
         self._remembered[session.sid] = session.settings()
         while len(self._remembered) > REMEMBER_KEPT:
             del self._remembered[next(iter(self._remembered))]
+        self._written = time.time()
+        self._write_table()
+
+    def _write_table(self) -> None:
+        """The table to the file and to the gist (in the background), under the lock."""
+        self._write_file()
+        if self._remote is not None:
+            self._remote.save(self._table_text())
+
+    def _write_file(self) -> None:
         if self._store is None:
             return
         try:
             temporary = self._store.with_name(self._store.name + ".tmp")
-            table = {"format": STORE_FORMAT, "sessions": {sid: asdict(s) for sid, s in self._remembered.items()}}
-            temporary.write_text(json.dumps(table, indent=1), encoding="utf-8")
+            temporary.write_text(self._table_text(), encoding="utf-8")
             # On Windows a file written a moment before can refuse the replace for a few
             # milliseconds (its virus scan or indexer: measured with ratesplot, 2026-10-28,
             # and here, 2026-11-03): tried again after short pauses before giving up.

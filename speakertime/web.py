@@ -78,6 +78,7 @@ import datetime
 import hashlib
 import json
 import math
+import os
 import re
 import urllib.parse
 import uuid
@@ -92,6 +93,7 @@ from . import ids
 from .colours import AUTO, CLOCK_COLOURS, DARK, DEFAULT_COLOUR, LIGHT, warning_colour
 from .sessions import HOST, REGISTRY, SIZE_DEFAULT, SIZE_MAX, SIZE_MIN, SIZE_STEP, SIZED, VIEWER, Checked, Refused, Shown
 from .shared import version_text
+from .store import TOKEN_NAME, GistStore
 from .timer import CLOCK, MINUTES, MODES, limit_minutes
 
 PAGE_TITLE = "SpeakerTime"
@@ -1734,11 +1736,31 @@ def _write_cookies() -> None:
     writer(key="cookies", data={**op, "seconds": _COOKIE_DAYS * 86400})
 
 
+def _use_remote() -> None:
+    """Keep the remembered settings in a gist as well, once the app has a token for it (v1.9, ``store``).
+
+    The token is the secret TOKEN_NAME (the app's settings on Community
+    Cloud), or the environment variable of that name; with neither, the
+    settings are kept in the file alone.
+    """
+    if REGISTRY.has_remote():
+        return
+    token = os.environ.get(TOKEN_NAME)
+    if not token:
+        try:
+            token = st.secrets.get(TOKEN_NAME)
+        except Exception:  # noqa: BLE001 - no secrets at all (locally, the checks): Streamlit raises its own error
+            token = None
+    if isinstance(token, str) and token.strip():
+        REGISTRY.use_remote(GistStore(token.strip()))
+
+
 def main() -> None:
     """The page: one run of it (Streamlit runs it again after every change)."""
     st.set_page_config(page_title=PAGE_TITLE, page_icon="⏱️", layout="wide")  # the clock spans the window (_PAGE_STYLE)
     st.html(_PAGE_STYLE)
     REGISTRY.set_connected(_connected)
+    _use_remote()
     state = st.session_state
     title = st.container(horizontal=True, vertical_alignment="bottom")
     title.markdown(f"### ⏱️ {PAGE_TITLE}")
