@@ -88,7 +88,6 @@ from __future__ import annotations
 import datetime
 import hashlib
 import json
-import math
 import os
 import re
 import urllib.parse
@@ -179,8 +178,8 @@ _SYNC = "sync"            # the check-in's element: its triggers, "tick" (the po
 # timer's colour for everyone. Remaining turns red, and blinks, once it shows
 # zero or less, and its label reads "Overtime" while it is negative (Terry,
 # 2026-11-01); between the Time Left Warning and zero it is in the warning's
-# colour. The figures are sized by their column's width (cqw: a hundredth of
-# it) times the host's size, and never wider than the column. The colours are
+# colour. The figures are sized by a unit times the host's size, and the
+# panel by its figures (v1.11; until then by its column's width). The colours are
 # CSS variables on the panel (and the pop-out's body), set by the script from
 # the session's look. The red differs by theme: on black #ff5a4f looked
 # salmon, "not a deep enough red" (Terry, 2026-11-03); of five drawn on
@@ -224,26 +223,32 @@ _CHAR_EM = 0.62
 # bound now the timers' column (cqw). Below that ratio the side column
 # would cost the figures more width than it gives them height (measured
 # by hand: about even at 5:2 with the Time Left Warning shown).
+# v1.11 (Terry, 2026-11-03): the panel is as wide as its figures, not as
+# its window, so the sliders and colour buttons stand just beside the
+# larger timer; the figures keep the size the slider gives them, and a
+# panel wider than the window runs past its edge, with a scroll bar under
+# it. The unit is 56 px on a computer and 8 vw on a phone, where the
+# figures still shrink to fit the width (_PHONE_PX). The labels, the Time
+# Limit and the space between it and the warning are sized by the window
+# (vw) as they were by the panel (cqw) before: the panel cannot be a
+# container its own contents are sized by.
 _PANEL_UNIT_PX = 56
-_PANEL_UNIT = f"clamp(8px, 8cqw, {_PANEL_UNIT_PX}px)"
+_PANEL_UNIT = f"clamp(8px, 8vw, {_PANEL_UNIT_PX}px)"
 _PIP_UNIT = "min(7.7vw, 13.5vh)"
 _PIP_WIDE_UNIT = "min(7.7cqw, 18.75vh)"
 _PIP_WIDE = "5/2"
 _PIP_LARGEST = 4
 """A pop-out's figures stop at this many units (400 on the slider): larger would leave its window (Terry, 2026-11-03)."""
-
-# v1.8 (Terry, 2026-11-03): the panel grows with the window only as far as
-# the figures need, "HH:MM:SS" (an hour of two digits at the most) at the
-# slider's largest, 800: eight characters at 0.62 em, eight units of 56 px,
-# 2223 px for the figures' column; then the panel's padding and, on the
-# host's panel, the columns of the sliders and colour buttons. A wider
-# window centres it.
-_WIDEST_TEXT = "12:34:56"
-_PANEL_FIGURES_PX = math.ceil(len(_WIDEST_TEXT) * _CHAR_EM * SIZE_MAX / 100 * _PANEL_UNIT_PX)
 _PANEL_PAD_PX = 8
 """The panel's padding at the left and at the right."""
 _TOOLS_PX = 56
 """On the host's panel, the slider's column (30 px) and the colour buttons' (26 px) beside each timer; as much again at the left keeps the figures centred."""
+_PANEL_MIN_PX = 480
+"""The narrowest panel (or the page's width, if less): its row of buttons fits on one line."""
+_PHONE_PX = 640
+"""In a window narrower than this, the panel is no wider than the page and the figures shrink to fit it, as before v1.11: a phone's page is not scrolled sideways."""
+_ROOM_TEXT = "00:00"
+"""The figures keep room for this text however short they are, so the panel does not narrow when "10:00" becomes "9:59"."""
 
 _DRAW_MS = 100
 """The clock is drawn every 100 ms: a second's change shows within a tenth of a second."""
@@ -343,8 +348,10 @@ _SHARED_CSS = f"""
 .value.over, .value.buzz {{ color: var(--over); }}
 .blink {{ animation: speakertime-blink {_BLINK_S}s steps(1, end) infinite; }}
 @keyframes speakertime-blink {{ 50% {{ opacity: 0.15; }} }}
-.pair {{ display: flex; justify-content: center; container-type: inline-size; }}
-.pair .cell {{ flex: 0 1 auto; min-width: 0; container-type: normal; }}
+.value {{ text-align: center; }}
+.value::before {{ content: "{_ROOM_TEXT}"; display: block; height: 0; overflow: hidden; visibility: hidden; }}
+.pair {{ display: flex; justify-content: center; }}
+.pair .cell {{ flex: 0 1 auto; min-width: 0; }}
 .pair .label {{ text-align: center; }}
 .pair .cell[hidden] {{ display: none; }}
 .modes button.on {{ background: var(--text); color: var(--panel); }}
@@ -776,27 +783,30 @@ const hub = () => (window.speakerTime ??= {{
 """
 
 _CLOCK_HTML = (
-    '<div class="clock">'
+    '<div class="scroll"><div class="clock">'
     + "".join(_row(name, name in SIZED) for name in ("elapsed", "remaining", "limit"))
     + f'<div class="tools">{_MODES_HTML}<button class="pop" type="button" hidden></button>'
     + f'<button class="buzzer" type="button" hidden>{_BUZZER_LABEL}</button></div>'
     + '<div class="why" hidden></div>'
     + '<div class="note" hidden></div>'
     + f'<div class="buzz-note" hidden>{_BUZZ_NOTE}</div>'
-    + "</div>"
+    + "</div></div>"
 )
 
+# The panel is as wide as its widest row (max-content), the figures' rows deciding it: the row of buttons and the
+# notes wrap within it (contain: inline-size). Each row's middle column takes the panel's width, so the sliders and
+# colour buttons of both timers stand in one column just beside the larger one's figures.
 _CLOCK_CSS = f"""
+.scroll {{ overflow-x: auto; overflow-y: hidden; }}
 .clock {{
   {_LOOK_CSS}
   border-radius: 14px; padding: 14px {_PANEL_PAD_PX}px 12px; box-shadow: inset 0 0 0 1px var(--line);
-  box-sizing: border-box; max-width: {_PANEL_FIGURES_PX + 2 * _PANEL_PAD_PX}px; margin: 0 auto;
+  box-sizing: border-box; width: max-content; min-width: min(100%, {_PANEL_MIN_PX}px); margin: 0 auto;
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 }}
-.clock.host {{ max-width: {_PANEL_FIGURES_PX + 2 * _PANEL_PAD_PX + 2 * _TOOLS_PX}px; }}
 .row {{ display: grid; grid-template-columns: minmax(0, 1fr); margin-bottom: 10px; }}
 .clock.host .row {{ grid-template-columns: {_TOOLS_PX}px minmax(0, 1fr) 30px 26px; }}
-.cell {{ grid-column: 1; container-type: inline-size; min-width: 0;
+.cell {{ grid-column: 1; min-width: 0;
   display: flex; flex-direction: column; align-items: center; line-height: 1; }}
 .pair {{ grid-column: 1; min-width: 0; }}
 .clock.host .row > .cell, .clock.host .pair {{ grid-column: 2; }}
@@ -807,15 +817,21 @@ _CLOCK_CSS = f"""
 .swatches button {{ width: 17px; height: 17px; padding: 0; border-radius: 50%; cursor: pointer;
   background: var(--swatch); border: 1px solid var(--line); }}
 .swatches button.on {{ outline: 2px solid var(--text); outline-offset: 2px; }}
-.label {{ font-size: clamp(14px, 4.6cqw, 24px); margin-bottom: 4px; }}
+.label {{ font-size: clamp(14px, 4.2vw, 24px); margin-bottom: 4px; }}
 .value {{ --scale: 1; --chars: 4; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap;
-  font-size: min(calc(var(--scale) * {_PANEL_UNIT}), calc(100cqw / (var(--chars) * {_CHAR_EM}))); }}
-.limit .value {{ font-size: clamp(22px, 7.6cqw, 54px); font-weight: 600; }}
-.limit .label {{ font-size: clamp(14px, 3.6cqw, 22px); }}
-.pair .cell + .cell {{ margin-left: clamp(28px, 7.2cqw, 44px); }}
+  font-size: calc(var(--scale) * {_PANEL_UNIT}); }}
+@media (max-width: {_PHONE_PX - 0.02}px) {{
+  .clock {{ --room: calc(100vw - 2rem - {2 * _PANEL_PAD_PX}px); max-width: 100%; }}
+  .clock.host {{ --room: calc(100vw - 2rem - {2 * _PANEL_PAD_PX + 2 * _TOOLS_PX}px); }}
+  .value {{ font-size: min(calc(var(--scale) * {_PANEL_UNIT}), calc(var(--room) / (var(--chars) * {_CHAR_EM}))); }}
+}}
+.limit .value {{ font-size: clamp(22px, 7vw, 54px); font-weight: 600; }}
+.limit .label {{ font-size: clamp(14px, 3.4vw, 22px); }}
+.pair .cell + .cell {{ margin-left: clamp(28px, 6.8vw, 44px); }}
 .row[data-r="remaining"], .row[data-r="limit"] {{ margin-top: 20px; }}
 {_SHARED_CSS}
-.tools {{ display: flex; justify-content: center; align-items: center; flex-wrap: wrap; gap: 8px 12px; margin-top: 4px; }}
+.tools {{ display: flex; justify-content: center; align-items: center; flex-wrap: wrap; gap: 8px 12px; margin-top: 4px;
+  contain: inline-size; }}
 .modes {{ display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }}
 .modes button {{ font: inherit; font-size: 14px; color: var(--text); background: transparent; border: 0;
   padding: 4px 10px; cursor: pointer; }}
@@ -826,7 +842,7 @@ _CLOCK_CSS = f"""
 .pop:hover {{ border-color: var(--text); }}
 .buzzer {{ border-color: var(--over); touch-action: none; user-select: none; -webkit-user-select: none; }}
 .buzzer.on {{ background: var(--over); color: var(--panel); }}
-.note, .why, .buzz-note {{ font-size: 13px; text-align: center; margin-top: 6px; }}
+.note, .why, .buzz-note {{ font-size: 13px; text-align: center; margin-top: 6px; contain: inline-size; }}
 """
 
 _START = "Start"
