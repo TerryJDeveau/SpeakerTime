@@ -14,10 +14,12 @@ running, it stops the timer too). Time Remaining is the Time Limit minus
 Elapsed Time. It turns red and blinks when it reaches zero, and once the limit
 is passed it goes negative and its label reads **Overtime**, red and blinking
 too; with a blank, 0 or negative limit it stays at zero (and plain). The
-slider on the right of each timer sets its size, from a quarter to four
-times, on every viewer's panel and pop-out as well as the host's (the
-figures never grow wider than the panel, so the largest settings show only
-where the height, not the width, limits them).
+slider on the right of each timer sets its size on every viewer's panel and
+pop-out as well as the host's. It starts half way; at the top, a time of
+five characters ("12:34") fills the panel's width, or the pop-out's (in a
+wide, low pop-out, about half its height), so the whole of the slider's
+travel changes the size. Longer figures ("1:02:03") shrink to fit near the
+top.
 
 **Colours**: beside each slider, a column of colour buttons sets that
 timer's colour for everyone: white (the default), black, yellow, orange,

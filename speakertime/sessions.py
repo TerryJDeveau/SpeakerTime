@@ -87,18 +87,24 @@ VIEWER = "viewer"
 SIZED = ("elapsed", "remaining")
 """The timers whose size the host sets (the Time Limit's figures keep theirs)."""
 
-SIZE_MIN, SIZE_MAX, SIZE_STEP, SIZE_DEFAULT = 25, 400, 5, 100
-"""A timer's size, in percent of the figures' own size on each panel or pop-out (which follows its width): a quarter to four times.
+SIZE_MIN, SIZE_MAX, SIZE_STEP, SIZE_DEFAULT = 25, 400, 5, 200
+"""A timer's size, in percent of a quarter of the largest figures that fit (``web``): SIZE_MAX is the largest.
 
-The most was 200 until Terry asked for twice it (2026-11-01). The figures
-still never grow wider than their column (``web``), so where the width
-already limits them a larger setting shows no larger: in a wide, low pop-out
-the height limits them first, and there they grow up to four times.
+So the slider's whole range takes effect (Terry, 2026-11-03: in v1.2 the
+figures stopped growing part way up it, on the panel and in the pop-out).
+At SIZE_MAX five characters ("12:34") just fill the panel's width, or the
+pop-out's, or, in a wide and low pop-out, a little over half its height.
+The default is half way: figures about four fifths the size v1.0 to v1.2
+drew at their default, which was 100 on a scale twice as coarse (settings
+kept before are read at twice their number, ``Registry._load``).
 """
 
 
 REMEMBER_KEPT = 500
 """The most sessions whose settings are remembered, the most recently changed."""
+
+STORE_FORMAT = 2
+"""The remembered settings' file: {"format": 2, "sessions": {ID: settings}} from v1.3; v1.2's held the table of sessions alone."""
 
 _REPLACE_PAUSES = (0.05, 0.1, 0.2, None)
 """Pauses (seconds) between tries of putting the written file in place; None: the last try."""
@@ -131,8 +137,12 @@ class Settings:
     """The host's way of showing the times."""
 
     @classmethod
-    def read(cls, kept: object) -> Settings:
-        """Settings from what was kept (the file), each one checked: anything spoilt or unknown is left at its default."""
+    def read(cls, kept: object, size_factor: int = 1) -> Settings:
+        """Settings from what was kept (the file), each one checked: anything spoilt or unknown is left at its default.
+
+        ``size_factor`` takes sizes kept on an older scale to this one (2 for
+        v1.2's file, ``Registry._load``), within SIZE_MIN to SIZE_MAX.
+        """
         settings = cls()
         if not isinstance(kept, dict):
             return settings
@@ -143,7 +153,7 @@ class Settings:
         for timer in SIZED:
             size = (kept.get("sizes") or {}).get(timer) if isinstance(kept.get("sizes"), dict) else None
             if isinstance(size, int) and SIZE_MIN <= size <= SIZE_MAX:
-                settings.sizes[timer] = size
+                settings.sizes[timer] = min(SIZE_MAX, size * size_factor)
             colour = (kept.get("colours") or {}).get(timer) if isinstance(kept.get("colours"), dict) else None
             if colour in CLOCK_COLOURS:
                 settings.colours[timer] = colour
@@ -309,11 +319,17 @@ class Registry:
             kept = json.loads(self._store.read_text(encoding="utf-8"))
             if not isinstance(kept, dict):
                 raise ValueError("not a table of sessions")
+            # v1.2 wrote the table of sessions itself, its sizes on a scale half
+            # as fine (SIZE_DEFAULT was 100); from v1.3 it is under "sessions".
+            factor = 1 if kept.get("format") == STORE_FORMAT else 2
+            sessions = kept.get("sessions") if factor == 1 else kept
+            if not isinstance(sessions, dict):
+                raise ValueError("no table of sessions")
         except (OSError, ValueError) as problem:
             print(f"Warning: the remembered settings in {self._store} could not be read ({problem}); starting without them.",
                   file=sys.stderr)
             return {}
-        return {sid: Settings.read(settings) for sid, settings in kept.items()
+        return {sid: Settings.read(settings, factor) for sid, settings in sessions.items()
                 if isinstance(sid, str) and ids.normalized(sid) == sid and not ids.problem(sid)}
 
     def _remember(self, session: Session) -> None:
@@ -326,7 +342,8 @@ class Registry:
             return
         try:
             temporary = self._store.with_name(self._store.name + ".tmp")
-            temporary.write_text(json.dumps({sid: asdict(s) for sid, s in self._remembered.items()}, indent=1), encoding="utf-8")
+            table = {"format": STORE_FORMAT, "sessions": {sid: asdict(s) for sid, s in self._remembered.items()}}
+            temporary.write_text(json.dumps(table, indent=1), encoding="utf-8")
             # On Windows a file written a moment before can refuse the replace for a few
             # milliseconds (its virus scan or indexer: measured with ratesplot, 2026-10-28,
             # and here, 2026-11-03): tried again after short pauses before giving up.

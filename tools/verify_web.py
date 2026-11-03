@@ -188,7 +188,8 @@ def main() -> int:
           (r.number_input(key=web._LIMIT_BOX).value, r.number_input(key=web._WARN_BOX).value, shown.theme, shown.host_mode),
           (7.5, 1.0, "light", "minutes"))
     check("and said so", "starts from its settings of last time" in texts(r), True)
-    check("the file holds the sessions of this run too", sorted(json.loads(REMEMBERED.read_text(encoding="utf-8")))[:2], [sid, "LASTWEEK"])
+    check("the file holds the sessions of this run too",
+          sorted(json.loads(REMEMBERED.read_text(encoding="utf-8"))["sessions"])[:2], [sid, "LASTWEEK"])
 
     for at_ in (a, b, b2, c, d, e, legacy, other, f, g, w, hst, t, r):
         check("no exception", [x.value for x in at_.exception], [])
