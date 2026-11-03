@@ -824,8 +824,11 @@ _CLOCK_HTML = (
 )
 
 # The panel is as wide as its widest row (max-content), the figures' rows deciding it: the row of buttons and the
-# notes wrap within it (contain: inline-size). Each row's middle column takes the panel's width, so the sliders and
-# colour buttons of both timers stand in one column just beside the larger one's figures.
+# notes wrap within it (contain: inline-size). The host's panel is one grid whose timer rows share its columns
+# (subgrid): the figures' column is as wide as the larger timer's figures, the sliders and colour buttons of both
+# timers stand in one column just beside it, and any width to spare (the panel's narrowest, a wider Time Limit row)
+# goes to the two outer columns, so they stay beside it and the figures in the middle (v1.12: in v1.11 the spare width
+# went into the figures' column, 36 px between the figures and the sliders at the default size).
 _CLOCK_CSS = f"""
 .scroll {{ overflow-x: auto; overflow-y: hidden; }}
 .clock {{
@@ -834,16 +837,18 @@ _CLOCK_CSS = f"""
   box-sizing: border-box; width: max-content; min-width: min(100%, {_PANEL_MIN_PX}px); margin: 0 auto;
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 }}
+.clock.host {{ display: grid; grid-template-columns: minmax(0, 1fr) {_TOOLS_PX}px max-content 30px 26px minmax(0, 1fr); }}
+.clock.host > * {{ grid-column: 1 / -1; }}
 .row {{ display: grid; grid-template-columns: minmax(0, 1fr); margin-bottom: 10px; }}
-.clock.host .row {{ grid-template-columns: {_TOOLS_PX}px minmax(0, 1fr) 30px 26px; }}
+.clock.host .row.timer {{ grid-template-columns: subgrid; }}
 .cell {{ grid-column: 1; min-width: 0;
   display: flex; flex-direction: column; align-items: center; line-height: 1; }}
 .pair {{ grid-column: 1; min-width: 0; }}
-.clock.host .row > .cell, .clock.host .pair {{ grid-column: 2; }}
-.size {{ grid-column: 3; justify-self: center; align-self: stretch; margin: 0; width: 22px; min-height: 64px;
+.clock.host .row.timer > .cell {{ grid-column: 3; }}
+.size {{ grid-column: 4; justify-self: center; align-self: stretch; margin: 0; width: 22px; min-height: 64px;
   writing-mode: vertical-lr; direction: rtl; accent-color: {_SLIDER_COLOUR}; cursor: ns-resize; }}
 .size[hidden], .swatches[hidden] {{ display: none; }}
-.swatches {{ grid-column: 4; align-self: center; display: flex; flex-direction: column; align-items: center; gap: 5px; }}
+.swatches {{ grid-column: 5; align-self: center; display: flex; flex-direction: column; align-items: center; gap: 5px; }}
 .swatches button {{ width: 17px; height: 17px; padding: 0; border-radius: 50%; cursor: pointer;
   background: var(--swatch); border: 1px solid var(--line); }}
 .swatches button.on {{ outline: 2px solid var(--text); outline-offset: 2px; }}
