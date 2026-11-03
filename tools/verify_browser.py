@@ -4,7 +4,8 @@ Starts the page on a free port (or tests ``--url``), then plays the
 session's life through: waiting for a session not yet created, a taken ID,
 the timers agreeing on every screen, reloads, the host's window closed and
 "Assume Host Role?", a creator who comes back, Leave Session, the pop-out
-window. Prints each check and exits 1 on any failure.
+window, and the pop-ups offered while another tab of the browser has it.
+Prints each check and exits 1 on any failure.
 
 Needs Playwright (``pip install playwright``) and a Chromium: ``--chrome``
 uses the installed Google Chrome (no download, as on Buddug), ``--executable``
@@ -348,6 +349,7 @@ def run(url: str, launch: dict, shots: Path | None) -> None:
             sizes_and_modes(a, b, c, pip)
             colours_and_warning(a, c)
         windows_of_one_browser(browser, errors)
+        popups_of_one_browser(browser, errors, shot)
 
         ok("no script errors on any page", not errors, errors)
         browser.close()
@@ -602,8 +604,88 @@ def windows_of_one_browser(browser, errors: list[str]) -> None:
     profile.close()
 
 
+_POP_OPEN = "Pop out (stays on top)"
+_POPUP_OPEN = "Pop-up (may get obscured)"
+_WHY = f"() => {{ const w = {_CLOCK_ROOT}.querySelector('.why'); return w.hidden ? null : w.textContent; }}"
+_HAS_PIP = "() => !!(window.documentPictureInPicture && documentPictureInPicture.window)"
+_GONE = "() => document.body.classList.contains('gone') && getComputedStyle(document.querySelector('.gone-note')).display !== 'none'"
+
+
+def popups_of_one_browser(browser, errors: list[str], shot) -> None:
+    """18. One pop-out for the whole browser: the other tabs offer a pop-up, then the pop-out again once it closes (Terry, 2026-11-03)."""
+    profile = browser.new_context(viewport={"width": 700, "height": 800})
+
+    def tab(sid: str, create: bool) -> Page:
+        page = profile.new_page()
+        page.on("pageerror", lambda error: errors.append(f"tab: {error}"))
+        page.goto(profile_url)
+        page.locator('[data-testid="stApp"]').wait_for()
+        page.wait_for_timeout(2000)
+        id_box(page).fill(sid)
+        button(page, "Create New Session" if create else "Connect to Session").click()
+        page.get_by_text("You are the host." if create else "You are viewing it.").wait_for(timeout=5000)
+        return page
+
+    def label(page: Page) -> str:
+        return on_clock(page, _POP_LABEL)
+
+    def pressed(page: Page) -> Page:
+        with profile.expect_page(timeout=5000) as popped:
+            on_clock(page, _CLICK_POP)
+        return popped.value
+
+    def ticking(window: Page) -> list[str]:
+        first = window.locator('[data-v="elapsed"]').text_content()
+        window.wait_for_timeout(1600)
+        return [first, window.locator('[data-v="elapsed"]').text_content()]
+
+    host = tab("ECHO", True)
+    button(host, "Start").click()
+    v1, v2 = tab("ECHO", False), tab("ECHO", False)
+    labels = [label(p) for p in (host, v1, v2)]
+    ok("three tabs of one browser: each offers the pop-out", labels == [_POP_OPEN] * 3, labels)
+    pressed(host)
+    seen = settled(lambda: [label(v1), label(v2)], [_POPUP_OPEN] * 2)
+    ok("the host's pop-out open: the other two tabs offer a pop-up", seen == [_POPUP_OPEN] * 2, seen)
+    why = on_clock(v1, _WHY)
+    ok("with a note naming the session",
+       why == "Another tab of this browser has the on-top pop-out (session ECHO). The browser allows one at a time.", why)
+    shot(v1, "7-popup-offered.png")
+
+    popup = pressed(v1)
+    v1.wait_for_timeout(1200)
+    seen = [host.evaluate(_HAS_PIP), v1.evaluate(_HAS_PIP), label(host), label(v1)]
+    ok("a viewer's pop-up opens, the host's pop-out kept", seen == [True, False, "Close the pop-out", "Close the pop-up"], seen)
+    seen = ticking(popup)
+    ok("the pop-up ticks", seen[0] != seen[1], seen)
+
+    on_clock(host, _CLICK_POP)
+    seen = settled(lambda: [label(v2), label(v1), label(host)], [_POP_OPEN, "Close the pop-up", _POP_OPEN])
+    ok("the pop-out closed: the tabs without a pop-up offer it again, the pop-up kept",
+       seen == [_POP_OPEN, "Close the pop-up", _POP_OPEN], seen)
+    pressed(v2)
+    seen = settled(lambda: label(host), _POPUP_OPEN)
+    ok("the first to press has it: the host's tab offers a pop-up now", seen == _POPUP_OPEN, seen)
+
+    v1.reload()
+    v1.get_by_text("You are viewing it.").wait_for(timeout=8000)
+    seen = settled(lambda: label(v1), "Close the pop-up", 5.0)
+    ok("a tab reloaded takes back its pop-up", seen == "Close the pop-up" and not popup.is_closed(), seen)
+    seen = ticking(popup)
+    ok("which ticks again, its notice not shown", seen[0] != seen[1] and popup.evaluate(_GONE) is False, seen)
+
+    v1.close()
+    gone = settled(lambda: popup.evaluate(_GONE), True, 6.0)
+    ok("its tab closed: the pop-up says its tab has gone, the figures hidden", gone is True, gone)
+    shot(popup, "8-popup-gone.png")
+    v2.close()
+    seen = settled(lambda: label(host), _POP_OPEN, 4.0)
+    ok("the tab with the pop-out closed: the host's tab offers it again", seen == _POP_OPEN, seen)
+    profile.close()
+
+
 profile_url = ""
-"""The page's address, for windows_of_one_browser (set by run)."""
+"""The page's address, for windows_of_one_browser and popups_of_one_browser (set by run)."""
 
 
 def main() -> int:
