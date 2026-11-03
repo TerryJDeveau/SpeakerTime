@@ -75,11 +75,13 @@ another window of the same browser hosted BRAVO, went to BRAVO as a viewer.
 from __future__ import annotations
 
 import datetime
+import hashlib
 import json
 import re
 import urllib.parse
 import uuid
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import streamlit as st
 from streamlit.runtime import Runtime
@@ -119,6 +121,8 @@ TAB_ID_KEY = "speakertime_tabid"
 """The tab's own random id, in its sessionStorage."""
 POPUP_KEY = "speakertime_popup"
 """The name of the tab's pop-up while one is open, in its sessionStorage: a tab reloaded finds it by that name."""
+UPDATED_KEY = "speakertime_updated"
+"""Set in the tab's sessionStorage when new code closed its pop-out before reloading the tab (_SCRIPTS_KEY): its note says so."""
 
 _BROWSER_ID = re.compile(r"[A-Za-z0-9]{8,64}")
 """A browser's or a tab's id as the page's script makes one (``_READER_JS``); anything else is ignored."""
@@ -160,9 +164,11 @@ _LOST = "lost"            # the check-in's script found the clock gone from the 
 # colour. The figures are sized by their column's width (cqw: a hundredth of
 # it) times the host's size, and never wider than the column. The colours are
 # CSS variables on the panel (and the pop-out's body), set by the script from
-# the session's look.
+# the session's look. The red differs by theme: on black #ff5a4f looked
+# salmon, "not a deep enough red" (Terry, 2026-11-03); of five drawn on
+# black he chose #ff2a2a. On white the darker #d1242f, which he found good.
 _THEMES = {
-    DARK: {"panel": "#000000", "text": "#ffffff", "line": "#6b7280", "over": "#ff5a4f"},
+    DARK: {"panel": "#000000", "text": "#ffffff", "line": "#6b7280", "over": "#ff2a2a"},
     LIGHT: {"panel": "#ffffff", "text": "#000000", "line": "#9ca3af", "over": "#d1242f"},
 }
 """Each theme's background, other text, lines (buttons' borders) and out-of-time red (darker on white, to read)."""
@@ -313,6 +319,23 @@ pop-out (Document Picture-in-Picture) closes with its tab, so needs none.
 _WATCH_MS = 500
 """How often a pop-up's own watchdog (_WATCH_JS) looks at when its tab last drew it."""
 
+_SCRIPTS_KEY = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()[:12]
+"""This file's code, as the page's script knows it: a tab holding a note of the timer made by other code reloads.
+
+Measured 2026-11-03 (v1.3 to v1.4, the Reboot after the merge; replayed
+with two servers taking turns on one port): a tab left open while the
+server restarts with other code keeps the earlier code's note of the timer
+(``window.speakerTime``), the timer drawing its panel and its buttons'
+listeners, none of which the new code can reach or stop, and the new code
+ran on that note. The old timer kept setting the button's label by the old
+rule while the new note under it went stale (Terry: "Another tab of this
+browser has the on-top pop-out" under "Pop out"), and the old buttons took
+no lock, so the other tabs never saw that tab's pop-out. A reload put it
+right. So the note carries this key (``hub`` in _HUB_JS), and a note of
+another key is retired: its timer stopped, its pop-out closed, the tab
+reloaded once.
+"""
+
 # The watchdog, run in the pop-up's own window: the tab's timers and functions
 # stop with the tab, so it cannot be one of them. A round of its own that
 # comes late (the pop-up hidden behind other windows, its timers slowed with
@@ -330,7 +353,45 @@ _WATCH_JS = f"""(() => {{
   }}, {_WATCH_MS});
 }})();"""
 
-_HUB_JS = f"""
+_RELOAD_AFTER_MS = 1000
+"""A tab retiring an earlier version's note reloads this long after: a run under way finishes its cookies first.
+
+Measured 2026-11-03: reloading at once, in the run that laid out a session
+just created, lost the run's cookies (the new host's token not yet written),
+and the creator came back a viewer.
+"""
+
+# Shared by every script that may meet a note of the timer made by other code
+# (_SCRIPTS_KEY): the cookie reader, which runs first at each visit, so open
+# tabs reload as soon as a restarted server answers, and the clock and the
+# check-in. That note is retired: its timer stopped, its pop-out kept on top
+# closed (its drawing stops with the old code, and on Community Cloud that
+# pop-out belongs to the top page, which a reload of the app's frame leaves
+# open), and the tab reloaded once, so that the new code starts afresh; until
+# then a stub, and every script does nothing. A pop-up is left open: the tab,
+# reloaded, takes it back (adopt).
+_RETIRE_JS = f"""
+const SCRIPTS_KEY = {json.dumps(_SCRIPTS_KEY)};
+const UPDATED_KEY = {json.dumps(UPDATED_KEY)};
+
+const reloading = () => {{
+  const old = window.speakerTime;
+  if (old === undefined) return false;
+  if (old.key === SCRIPTS_KEY) return old.reloading === true;
+  window.speakerTime = {{ key: SCRIPTS_KEY, reloading: true }};
+  try {{ clearInterval(old.panelTimer); }} catch (error) {{}}
+  try {{
+    if (old.pip && !old.popup && !old.pip.closed) {{
+      old.pip.close();
+      sessionStorage.setItem(UPDATED_KEY, "1");
+    }}
+  }} catch (error) {{}}
+  setTimeout(() => location.reload(), {_RELOAD_AFTER_MS});
+  return true;
+}};
+"""
+
+_HUB_JS = _RETIRE_JS + f"""
 const DRAW_MS = {_DRAW_MS};
 const RESYNC_S = {_RESYNC_S};
 const KICK_AFTER_MS = {_KICK_AFTER_MS};
@@ -368,9 +429,11 @@ const minutes = (tenths) => {{
 }};
 
 // The page's one note of the timer, kept on the window so that every element
-// that is rebuilt (each of the page's runs) finds the one before's.
+// that is rebuilt (each of the page's runs) finds the one before's. Callers
+// ask reloading() first (_RETIRE_JS).
 const hub = () => (window.speakerTime ??= {{
-  base: null,       // the last reading taken: {{sid, elapsed, running, limit, version, sizes, at}}, at from performance.now()
+  key: SCRIPTS_KEY, // the code that made it
+  base: null,      // the last reading taken: {{sid, elapsed, running, limit, version, sizes, at}}, at from performance.now()
   lastSync: 0,      // when a check-in last arrived
   lastKick: 0,      // when the pop-out last asked for one
   kick: null,       // asks for a check-in (the latest sync element's trigger)
@@ -601,6 +664,7 @@ _POPUP_CLOSE = "Close the pop-up"
 _ELSEWHERE = "Another tab of this browser has the on-top pop-out{of}. The browser allows one at a time."
 """Under the button while it offers a pop-up; {of} is " (session ID)", or nothing when the other tab's session is not known."""
 _POPUP_BLOCKED = "The pop-up was blocked: allow pop-ups for this site in the browser."
+_UPDATED_TEXT = "SpeakerTime was updated, which closed the pop-out: press the button to open it again."
 
 _POP_LOCK = "speakertime-popout"
 """The lock (Web Locks) a tab holds while its pop-out is open, so other tabs of the browser offer a pop-up instead.
@@ -652,6 +716,7 @@ const POPUP_OPEN = {json.dumps(_POPUP_OPEN)};
 const POPUP_CLOSE = {json.dumps(_POPUP_CLOSE)};
 const ELSEWHERE = {json.dumps(_ELSEWHERE)};
 const POPUP_BLOCKED = {json.dumps(_POPUP_BLOCKED)};
+const UPDATED_TEXT = {json.dumps(_UPDATED_TEXT)};
 const POP_GUARD_MS = {_POP_GUARD_MS};
 const POP_LOCK = {json.dumps(_POP_LOCK)};
 const POP_LOCK_OF = {json.dumps(_POP_LOCK_OF)};
@@ -782,6 +847,7 @@ const adopt = (h) => {{
 // the latest call's), and the page has one timer (h.panelTimer).
 export default function (component) {{
   const {{ data, parentElement, setTriggerValue }} = component;
+  if (reloading()) return;
   const h = hub();
   h.update(data);
   h.pageMode = data.mode;
@@ -803,6 +869,14 @@ export default function (component) {{
     wire(h, root);
   }}
   if (!h.adopted) adopt(h);
+  try {{
+    if (sessionStorage.getItem(UPDATED_KEY) !== null) {{
+      sessionStorage.removeItem(UPDATED_KEY);
+      const note = root.querySelector(".note");
+      note.textContent = UPDATED_TEXT;
+      note.hidden = false;
+    }}
+  }} catch (error) {{}}
   drawPanel(h);
 }}
 
@@ -879,6 +953,7 @@ const LOST_AFTER = {_LOST_AFTER};
 
 export default function (component) {{
   const {{ data, setTriggerValue }} = component;
+  if (reloading()) return;
   const h = hub();
   h.update(data);
   h.kick = () => setTriggerValue("tick", Date.now());
@@ -898,12 +973,13 @@ export default function (component) {{
 # sessionStorage ("" for none), and the browser's and the tab's ids, each made
 # and kept if there was none. Sent once; the page starts from it on the run
 # that follows.
-_READER_JS = """
+_READER_JS = _RETIRE_JS + """
 const randomId = () => (typeof crypto !== "undefined" && crypto.randomUUID
   ? crypto.randomUUID().replace(/-/g, "")
   : Math.random().toString(36).slice(2) + Date.now().toString(36)).slice(0, 24);
 
 export default function (component) {
+  if (reloading()) return;  // an earlier version's note: the tab reloads, and reads afresh
   const { data, setTriggerValue } = component;
   const cookies = {};
   for (const name of data.names) {

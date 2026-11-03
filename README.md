@@ -96,6 +96,8 @@ A web page cannot make itself open in a window of its own, but the browser can:
   it again, and the first to press it has it. A pop-up stays open if its tab
   is closed, and then says so instead of showing the timers; a tab that is
   reloaded takes its pop-up back.
+- When SpeakerTime is updated, a page left open reloads itself once; a
+  pop-out it had is closed (the page says so), and a pop-up is taken back.
 - Or, on Windows, Microsoft PowerToys' *Always On Top* (Win+Ctrl+T) keeps any
   window on top, including an installed app's or a pop-up.
 
