@@ -28,4 +28,4 @@ imports ``timer``, ``ids``, ``colours`` and ``store``; ``timer``, ``ids``,
 # The version, major.minor (ratesplot's rule, 2026-10-27, taken over here):
 # the minor is raised by one in a commit of its own before each push of a
 # build; the major after a significant new capability.
-__version__ = "1.8"
+__version__ = "1.9"
