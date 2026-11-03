@@ -4,7 +4,8 @@ Starts the page on a free port (or tests ``--url``), then plays the
 session's life through: waiting for a session not yet created, a taken ID,
 the timers agreeing on every screen, reloads, the host's window closed and
 "Assume Host Role?", a creator who comes back, Leave Session, the pop-out
-window, and the pop-ups offered while another tab of the browser has it.
+window, the pop-ups offered while another tab of the browser has it, and a
+tab holding an earlier version's state.
 Prints each check and exits 1 on any failure.
 
 Needs Playwright (``pip install playwright``) and a Chromium: ``--chrome``
@@ -609,6 +610,8 @@ _POPUP_OPEN = "Pop-up (may get obscured)"
 _WHY = f"() => {{ const w = {_CLOCK_ROOT}.querySelector('.why'); return w.hidden ? null : w.textContent; }}"
 _HAS_PIP = "() => !!(window.documentPictureInPicture && documentPictureInPicture.window)"
 _GONE = "() => document.body.classList.contains('gone') && getComputedStyle(document.querySelector('.gone-note')).display !== 'none'"
+_NOTE = f"() => {{ const n = {_CLOCK_ROOT}.querySelector('.note'); return n.hidden ? null : n.textContent; }}"
+_UPDATED = "SpeakerTime was updated, which closed the pop-out: press the button to open it again."
 
 
 def popups_of_one_browser(browser, errors: list[str], shot) -> None:
@@ -681,6 +684,16 @@ def popups_of_one_browser(browser, errors: list[str], shot) -> None:
     v2.close()
     seen = settled(lambda: label(host), _POP_OPEN, 4.0)
     ok("the tab with the pop-out closed: the host's tab offers it again", seen == _POP_OPEN, seen)
+
+    # 19. A tab left open while the server restarts with other code (a Reboot after a merge) holds a note of the timer
+    # made by the earlier code: retired, its pop-out closed, the tab reloaded, back in its session, and told (2026-11-03).
+    pip = pressed(host)
+    with host.expect_event("load", timeout=8000):
+        host.evaluate("window.speakerTime.key = 'earlier'")
+    host.get_by_text("You are the host.").wait_for(timeout=8000)
+    note = settled(lambda: on_clock(host, _NOTE), _UPDATED, 4.0)
+    ok("an earlier version's note: its pop-out closed, the tab reloaded and still the host, and told so",
+       pip.is_closed() and note == _UPDATED and on_clock(host, "() => window.speakerTime.key") != "earlier", note)
     profile.close()
 
 
