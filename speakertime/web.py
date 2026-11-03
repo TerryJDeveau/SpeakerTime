@@ -199,8 +199,17 @@ _CHAR_EM = 0.62
 # and stop at 400's size (_PIP_LARGEST): 54 vh at the most, leaving the
 # rest for the labels, the other timer and the Time Limit. Longer figures
 # ("1:02:03") still shrink to fit near the top of the range.
+# v1.7 (Terry, 2026-11-03, the option offered with v1.6): in a pop-out at
+# least _PIP_WIDE as wide as it is high, the Time Limit and the switch
+# stand beside the timers rather than under them, which leaves the height
+# to the timers alone: 400 reaches 75 vh (18.75 vh a unit), the width
+# bound now the timers' column (cqw). Below that ratio the side column
+# would cost the figures more width than it gives them height (measured
+# by hand: about even at 5:2 with the Time Left Warning shown).
 _PANEL_UNIT = "clamp(8px, 8cqw, 56px)"
 _PIP_UNIT = "min(7.7vw, 13.5vh)"
+_PIP_WIDE_UNIT = "min(7.7cqw, 18.75vh)"
+_PIP_WIDE = "5/2"
 _PIP_LARGEST = 4
 """A pop-out's figures stop at this many units (400 on the slider): larger would leave its window (Terry, 2026-11-03)."""
 
@@ -289,19 +298,24 @@ _SHARED_CSS = f"""
 _GONE_TEXT = "Its SpeakerTime tab has gone: close this window."
 """Shown in a pop-up instead of the figures once its tab has stopped drawing them (closed, or reloaded and not back)."""
 
+# The timers, and the Time Limit with the switch: two groups that are no boxes of their own (display: contents)
+# until a wide, low pop-out sets them side by side.
 _PIP_HTML = (
-    "".join(_row(name, False) for name in ("elapsed", "remaining", "limit")) + _MODES_HTML
+    '<div class="timers">' + _row("elapsed", False) + _row("remaining", False) + "</div>"
+    + '<div class="side">' + _row("limit", False) + _MODES_HTML + "</div>"
     + f'<div class="gone-note">{_GONE_TEXT}</div>'
 )
 
 _PIP_CSS = f"""
   html {{ height: 100%; }}
   body {{ {_LOOK_CSS} margin: 0; height: 100%; font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-    display: flex; flex-direction: column; justify-content: center; gap: 1vh; overflow: hidden; }}
+    display: flex; flex-direction: column; justify-content: center; gap: 1vh; overflow: hidden;
+    --unit: {_PIP_UNIT}; --room: 96vw; }}
+  .timers, .side {{ display: contents; }}
   .cell {{ display: flex; flex-direction: column; align-items: center; line-height: 1; }}
   .label {{ font-size: min(5vw, 6vh); margin-bottom: 0.6vh; }}
   .value {{ --scale: 1; --chars: 4; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap;
-    font-size: min(calc(var(--scale) * {_PIP_UNIT}), calc({_PIP_LARGEST} * {_PIP_UNIT}), calc(96vw / (var(--chars) * {_CHAR_EM}))); }}
+    font-size: min(calc(var(--scale) * var(--unit)), calc({_PIP_LARGEST} * var(--unit)), calc(var(--room) / (var(--chars) * {_CHAR_EM}))); }}
   .limit .value {{ font-size: min(7vw, 9vh); font-weight: 600; }}
   .row[data-r="remaining"], .row[data-r="limit"] {{ margin-top: 3vh; }}
   {_SHARED_CSS}
@@ -312,6 +326,16 @@ _PIP_CSS = f"""
   .gone-note {{ display: none; font-size: max(14px, min(5vw, 7vh)); text-align: center; padding: 0 5vw; }}
   body.gone .row, body.gone .modes {{ display: none; }}
   body.gone .gone-note {{ display: block; }}
+  @media (min-aspect-ratio: {_PIP_WIDE}) {{
+    body {{ flex-direction: row; align-items: center; gap: 3vw; padding: 0 2vw; box-sizing: border-box; }}
+    .timers {{ display: flex; flex-direction: column; gap: 1vh; flex: 1 1 0; min-width: 0; container-type: inline-size;
+      --unit: {_PIP_WIDE_UNIT}; --room: 100cqw; }}
+    .side {{ display: flex; flex-direction: column; align-items: center; gap: 3vh; flex: none; }}
+    .side .row[data-r="limit"] {{ margin-top: 0; }}
+    .side .pair {{ flex-direction: column; gap: 3vh; container-type: normal; }}
+    .side .pair .cell {{ flex: none; }}
+    body.gone .timers, body.gone .side {{ display: none; }}
+  }}
 """
 
 _GONE_MS = 3000
