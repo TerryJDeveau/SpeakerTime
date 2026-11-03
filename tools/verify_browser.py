@@ -75,6 +75,18 @@ _FIGURES = """(root) => {
 }"""
 _PANEL = f"() => ({_FIGURES})({_CLOCK_ROOT})"
 _POPOUT = f"() => ({_FIGURES})(document)"
+# A pop-out's layout: each timer's figures as a share of its height, whether the Time Limit stands beside the timers
+# (not under them), and any label, figures or switch that leaves the window.
+_LAYOUT = """() => {
+  const H = innerHeight, W = innerWidth;
+  const shown = [...document.querySelectorAll('.label, .value, .modes')].filter(e => e.getClientRects().length);
+  const outside = shown.filter(e => { const b = e.getBoundingClientRect();
+    return b.top < -0.5 || b.bottom > H + 0.5 || b.left < -0.5 || b.right > W + 0.5; }).map(e => e.dataset.v ?? e.dataset.l ?? 'modes');
+  const share = (n) => +(parseFloat(getComputedStyle(document.querySelector('[data-v="' + n + '"]')).fontSize) / H).toFixed(3);
+  const row = (n) => document.querySelector('.row[data-r="' + n + '"]').getBoundingClientRect();
+  return { size: [W, H], elapsed: share('elapsed'), remaining: share('remaining'),
+           beside: row('limit').top < row('remaining').bottom, outside };
+}"""
 
 # The host lets go of a slider at ``percent`` (as a drag ends: input, then change).
 _SLIDE = f"""([timer, percent]) => {{
@@ -355,7 +367,7 @@ def run(url: str, launch: dict, shots: Path | None) -> None:
             ok("stopped, each check-in reaches the script (about 4 in 4 s)", 3 <= alone["checkIns"] <= 6 and alone["clockKept"], alone)
             ok("the kick brings more, the clock kept", kicked["checkIns"] > alone["checkIns"] + 3 and kicked["clockKept"], kicked)
 
-            sizes_and_modes(a, b, c, pip)
+            sizes_and_modes(a, b, c, pip, shot)
             colours_and_warning(a, c)
         windows_of_one_browser(browser, errors)
         popups_of_one_browser(browser, errors, shot)
@@ -377,7 +389,41 @@ def mode_of(page: Page) -> str | None:
     return on_clock(page, _PANEL)["mode"]
 
 
-def sizes_and_modes(a: Page, b: Page, c: Page, pip: Page) -> None:
+def wide_and_low(c: Page, pip: Page, shot) -> None:
+    """12b. A pop-out at least 5:2: the Time Limit and the switch beside the timers, 400 at 75 % of the height (v1.7).
+
+    Terry, 2026-11-03, taking the option offered with v1.6 (54 % before, the
+    Time Limit and the switch under the timers). On entry C hosts TALK1 with
+    Elapsed at 100 and Remaining at 400, and leaves so.
+    """
+    size = pip.evaluate("() => [innerWidth, innerHeight]")
+
+    def laid_out(width: int, height: int) -> dict:
+        pip.set_viewport_size({"width": width, "height": height})
+        pip.wait_for_timeout(300)
+        return pip.evaluate(_LAYOUT)
+
+    on_clock(c, _SLIDE, ["elapsed", 25])  # the smallest, so that Remaining at 400 leaves room for everything else
+    c.wait_for_timeout(2500)
+    wide, stacked = laid_out(1200, 300), laid_out(600, 300)
+    ok("a pop-out of 1200 by 300: the Time Limit beside the timers, Remaining at 400 75 % of its height, all inside",
+       wide["beside"] and 0.74 <= wide["remaining"] <= 0.76 and not wide["outside"], wide)
+    ok("one of 600 by 300: under them as before, 54 %, all inside",
+       not stacked["beside"] and 0.53 <= stacked["remaining"] <= 0.55 and not stacked["outside"], stacked)
+    for timer in ("elapsed", "remaining"):
+        on_clock(c, _SLIDE, [timer, 200])
+        c.wait_for_timeout(2500)
+    default = laid_out(1200, 300)
+    ok("at the default, 200 each: 37.5 % of its height each, all inside",
+       0.37 <= default["elapsed"] <= 0.38 and 0.37 <= default["remaining"] <= 0.38 and not default["outside"], default)
+    shot(pip, "6b-popout-wide.png")
+    pip.set_viewport_size({"width": size[0], "height": size[1]})
+    for timer, percent in (("elapsed", 100), ("remaining", 400)):
+        on_clock(c, _SLIDE, [timer, percent])
+        c.wait_for_timeout(2500)
+
+
+def sizes_and_modes(a: Page, b: Page, c: Page, pip: Page, shot) -> None:
     """12-13. The host's sliders reach every panel and pop-out; each panel's and pop-out's switch is its own (2026-11-01).
 
     On entry C hosts TALK1 with its pop-out open, A views it, B is on the start screen.
@@ -425,6 +471,7 @@ def sizes_and_modes(a: Page, b: Page, c: Page, pip: Page) -> None:
     on_clock(c, _SLIDE, ["remaining", 400])
     c.wait_for_timeout(2500)
     a.set_viewport_size({"width": 800, "height": 900})
+    wide_and_low(c, pip, shot)
 
     # 13. Ways of showing the times. The host's switch changes its own panel only, and not its pop-out.
     ok("all start at H:MM:SS", (mode_of(c), mode_of(a), pip.evaluate(_POPOUT)["mode"]) == ("clock", "clock", "clock"))
