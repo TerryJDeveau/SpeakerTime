@@ -157,6 +157,7 @@ _BOX = "box"              # the Session ID box
 _LIMIT_BOX = "limit_box"  # the Time Limit box (minutes)
 _WARN_BOX = "warn_box"    # the Time Left Warning box (minutes)
 _PICKER = "warn_colours"  # the warning's colour buttons: their trigger, "pick"
+_START_BUTTON = "start"   # the host's Start button, which reads Restart once the timer has run
 _TOKENS = "tokens"        # the host's token of each session this browser hosted: {sid: token}
 _BROWSER = "browser"      # this browser's id (None if its script could not say)
 _TAB = "tab"              # this tab's id (None if its script could not say)
@@ -828,6 +829,9 @@ _CLOCK_CSS = f"""
 .note, .why, .buzz-note {{ font-size: 13px; text-align: center; margin-top: 6px; }}
 """
 
+_START = "Start"
+_RESTART = "Restart"
+"""The Start button's label once the timer has run (Elapsed not zero), running or stopped: Start goes on from there."""
 _POP_OPEN = "Pop out (stays on top)"
 _POP_CLOSE = "Close the pop-out"
 _POPUP_OPEN = "Pop-up (may get obscured)"
@@ -1866,8 +1870,10 @@ def _host_controls(shown: Shown) -> None:
     with row:
         picker(key=_PICKER, data={"buttons": buttons, "chosen": chosen, "auto": AUTO}, on_pick_change=_warning_colour_picked)
     row = st.container(horizontal=True)
-    # A button that would do nothing is greyed (ratesplot's rule: grey what has no effect).
-    row.button("Start", on_click=_control, args=("start",), disabled=shown.running, type="primary")
+    # A button that would do nothing is greyed (ratesplot's rule: grey what has no effect). Start reads Restart once the
+    # timer has run, greyed or not (Terry, 2026-11-03), and Start again after Reset.
+    start = _RESTART if shown.running or shown.elapsed > 0 else _START
+    row.button(start, key=_START_BUTTON, on_click=_control, args=("start",), disabled=shown.running, type="primary")
     row.button("Stop", on_click=_control, args=("stop",), disabled=not shown.running)
     row.button("Reset", on_click=_control, args=("reset",), disabled=not shown.running and shown.elapsed == 0)
 
