@@ -15,11 +15,13 @@ Elapsed Time. It turns red and blinks when it reaches zero, and once the limit
 is passed it goes negative and its label reads **Overtime**, red and blinking
 too; with a blank, 0 or negative limit it stays at zero (and plain). The
 slider on the right of each timer sets its size on every viewer's panel and
-pop-out as well as the host's. It starts half way; at the top, a time of
-five characters ("12:34") fills the panel's width, or the pop-out's (in a
-wide, low pop-out, about half its height), so the whole of the slider's
-travel changes the size. Longer figures ("1:02:03") shrink to fit near the
-top.
+pop-out as well as the host's, from 25 to 800, starting at 200. The panel
+spans the browser window: at 800 its figures are twice as large as at 400,
+where the panel is wide enough (a little over 1,400 pixels for a time of
+five characters, "12:34"); on a narrower one they stop at its width. In a
+pop-out they stop at 400's size, which already fills its width (or, in a
+wide, low pop-out, about half its height): to make them larger, make the
+pop-out's window larger. Longer figures ("1:02:03") shrink to fit.
 
 **Colours**: beside each slider, a column of colour buttons sets that
 timer's colour for everyone: white (the default), black, yellow, orange,
