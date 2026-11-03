@@ -79,8 +79,11 @@ for trying it out): only the host's own tab is the host again after a reload.
 Session** under its ID later starts from its Time Limit, Time Left Warning,
 sizes, colours and way of showing the times, and says so. They are kept in
 `remembered_sessions.json` beside the program (the last 500 sessions). On
-Streamlit Community Cloud, whether that file outlives a reboot or a sleep
-has not been checked yet.
+Streamlit Community Cloud that file is lost when the app is rebooted
+(measured 2026-11-03: a Reboot starts a new machine from a fresh copy of the
+repository); it outlived the update a push brings by itself. Whether it
+outlives a sleep has not been checked; if waking the app starts a new
+machine too, it is lost then as well.
 
 ## Its own window, kept on top
 
