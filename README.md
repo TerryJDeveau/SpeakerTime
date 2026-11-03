@@ -11,10 +11,27 @@ or type one, and press **Create New Session**. Set the **Time Limit** in
 minutes, to one decimal place (2.5 is two and a half minutes), and use
 **Start**, **Stop** (a pause: Start resumes) and **Reset** (pressed while
 running, it stops the timer too). Time Remaining is the Time Limit minus
-Elapsed Time and goes negative, in red, once the limit is passed; with a blank,
-0 or negative limit it stays at zero. The slider on the right of each timer
-sets its size, from a quarter to double, on every viewer's panel and pop-out
-as well as the host's.
+Elapsed Time. It turns red and blinks when it reaches zero, and once the limit
+is passed it goes negative and its label reads **Overtime**, red and blinking
+too; with a blank, 0 or negative limit it stays at zero (and plain). The
+slider on the right of each timer sets its size, from a quarter to four
+times, on every viewer's panel and pop-out as well as the host's (the
+figures never grow wider than the panel, so the largest settings show only
+where the height, not the width, limits them).
+
+**Colours**: beside each slider, a column of colour buttons sets that
+timer's colour for everyone: white (the default), black, yellow, orange,
+green, blue and magenta (never red: red means time is out). Choosing black
+for one timer turns the other black too if it was white, and turns the
+panel white with black text; choosing white does the opposite.
+
+**Time Left Warning**: to the right of the Time Limit box, in minutes (blank
+for none). Once set, it shows beside the Time Limit on every panel and
+pop-out, and while Time Remaining is that many minutes or fewer (and more
+than zero) it changes to the warning's colour. That colour is green while
+Time Remaining is white or black, and otherwise the colour opposite Time
+Remaining's on the colour wheel (the **A** button); the four buttons after it
+are other colours to choose instead.
 
 **H:MM:SS or MMM.M**: the switch under the timers shows them as hours, minutes
 and seconds, or as minutes to a tenth ("12.5"). Every panel and every pop-out
@@ -41,8 +58,18 @@ role meanwhile). A window opened again goes back by itself when there is no
 doubt which session it means: the one session it would host, or the one
 session of yours still running and not open in another window of the browser.
 With several, it offers a **Rejoin** button for each. One browser can host
-several sessions, view several, or both, each in a window of its own.
+several sessions, view several, or both, each in a window of its own; a
+host and a viewer of the same session can be two tabs of one browser (handy
+for trying it out): only the host's own tab is the host again after a reload.
 **Leave Session** forgets the session.
+
+**A session used before**: a session nobody has open goes six hours later
+(or when the app restarts), but its settings are kept: **Create New
+Session** under its ID later starts from its Time Limit, Time Left Warning,
+sizes, colours and way of showing the times, and says so. They are kept in
+`remembered_sessions.json` beside the program (the last 500 sessions). On
+Streamlit Community Cloud, whether that file outlives a reboot or a sleep
+has not been checked yet.
 
 ## Its own window, kept on top
 
@@ -56,7 +83,8 @@ A web page cannot make itself open in a window of its own, but the browser can:
   just the timers. It stays above every other window, the slides included,
   and can be resized. This needs Chrome or Edge on a computer (version 116 or
   later). The page that opened it must stay open, but it can be hidden behind
-  other windows.
+  other windows. A browser keeps one pop-out at a time: opening one from
+  another tab or window of the same browser closes the first.
 - Or, on Windows, Microsoft PowerToys' *Always On Top* (Win+Ctrl+T) keeps any
   window on top, including an installed app's.
 

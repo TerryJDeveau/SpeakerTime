@@ -10,12 +10,20 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import sys
+import tempfile
 import urllib.parse
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
+# The checks' own file of remembered settings, never the app's (sessions.REMEMBER_FILE), holding one
+# session of an earlier run of the app (item 11).
+REMEMBERED = Path(tempfile.mkdtemp()) / "remembered.json"
+REMEMBERED.write_text(json.dumps({"LASTWEEK": {"limit": 7.5, "warning": 1.0, "colours": {"elapsed": "black", "remaining": "black"},
+                                               "theme": "light", "host_mode": "minutes"}}), encoding="utf-8")
+os.environ["SPEAKERTIME_REMEMBER"] = str(REMEMBERED)
 
 from streamlit.testing.v1 import AppTest  # noqa: E402
 
@@ -38,11 +46,11 @@ def check(what: str, got: object, expected: object) -> None:
         FAILURES.append(f"{what}: got {got!r}, expected {expected!r}")
 
 
-def sent(cookies: dict | None = None, tab: str = "", browser: str = "") -> dict:
-    """What the page's reader would send (``web._READER_JS``): cookies by name (values as kept: JSON encoded), the tab's session, the browser's id."""
+def sent(cookies: dict | None = None, tab: str = "", browser: str = "", tabid: str = "") -> dict:
+    """What the page's reader would send (``web._READER_JS``): cookies by name (values as kept: JSON encoded), the tab's session, the browser's and the tab's ids."""
     encoded = {name: value if isinstance(value, str) else urllib.parse.quote(json.dumps(value))
                for name, value in (cookies or {}).items()}
-    return {"cookies": encoded, "tab": tab, "browser": browser}
+    return {"cookies": encoded, "tab": tab, "browser": browser, "tabid": tabid}
 
 
 def page(heard: dict | None = None) -> AppTest:
@@ -89,6 +97,8 @@ def main() -> int:
     a.number_input(key=web._LIMIT_BOX).set_value(2.25).run()
     check("limit rounded in the box", a.number_input(key=web._LIMIT_BOX).value, 2.3)
     check("limit kept in the session", REGISTRY.shown(sid).limit, 2.3)
+    a.number_input(key=web._WARN_BOX).set_value(0.55).run()
+    check("warning rounded in its box, kept in the session", (a.number_input(key=web._WARN_BOX).value, REGISTRY.shown(sid).warning), (0.6, 0.6))
     button(a, "Start").click().run()
     labels = {b.label: b.disabled for b in a.button}
     check("running: Stop and Reset", (labels["Start"], labels["Stop"], labels["Reset"]), (True, False, False))
@@ -131,6 +141,7 @@ def main() -> int:
     button(b, "Yes").click().run()
     check("Yes: the host", "You are the host." in texts(b), True)
     check("its limit box from the session", b.number_input(key=web._LIMIT_BOX).value, 2.3)
+    check("its warning box from the session", b.number_input(key=web._WARN_BOX).value, 0.6)
 
     # What the browser keeps. A new window whose one recent session is running goes back to it by itself.
     c = page(sent({web.RECENT_COOKIE: [sid, "GONE"]}, browser="browserC1"))
@@ -161,11 +172,25 @@ def main() -> int:
     check("reloaded host's tab, session gone: its ID in the box",
           (hst.text_input(key=web._BOX).value, "Create New Session starts it again" in texts(hst)), ("LATER3", True))
     # Spoilt notes: the start screen.
-    e = page(sent({web.RECENT_COOKIE: "%7Bspoilt", web.HOSTS_COOKIE: "not json"}, tab="$$$", browser="no good!"))
+    e = page(sent({web.RECENT_COOKIE: "%7Bspoilt", web.HOSTS_COOKIE: "not json"}, tab="$$$", browser="no good!", tabid="x y"))
     check("spoilt notes: the start screen", e.session_state[web._SCREEN] if web._SCREEN in e.session_state else "start", "start")
     check("a spoilt browser id is not used", e.session_state[web._BROWSER], None)
+    check("a spoilt tab id is not used", e.session_state[web._TAB], None)
+    t = page(sent(browser="browserT1", tabid="tabT1abcd"))
+    check("the tab's id kept", t.session_state[web._TAB], "tabT1abcd")
 
-    for at_ in (a, b, b2, c, d, e, legacy, other, f, g, w, hst):
+    # A session of an earlier run of the app, created again: its settings back, and said so (Terry, 2026-11-01, item 11).
+    r = page(sent(browser="browserR1"))
+    r.text_input(key=web._BOX).input("lastweek").run()
+    button(r, "Create New Session").click().run()
+    shown = REGISTRY.shown("LASTWEEK")
+    check("an ID used in an earlier run: its settings back",
+          (r.number_input(key=web._LIMIT_BOX).value, r.number_input(key=web._WARN_BOX).value, shown.theme, shown.host_mode),
+          (7.5, 1.0, "light", "minutes"))
+    check("and said so", "starts from its settings of last time" in texts(r), True)
+    check("the file holds the sessions of this run too", sorted(json.loads(REMEMBERED.read_text(encoding="utf-8")))[:2], [sid, "LASTWEEK"])
+
+    for at_ in (a, b, b2, c, d, e, legacy, other, f, g, w, hst, t, r):
         check("no exception", [x.value for x in at_.exception], [])
 
     for failure in FAILURES:

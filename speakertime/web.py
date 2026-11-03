@@ -40,14 +40,18 @@ pop-out starts at its panel's choice when it opens.
 
 What the browser keeps
 ----------------------
-Two cookies and one note per tab:
+Three cookies and two notes per tab:
 - ``speakertime_recent``: the sessions this browser was in, most recent first;
 - ``speakertime_hosts``: the host's token of each session hosted from it (the
   last ``_HOSTS_KEPT``);
 - ``speakertime_browser``: a random id, so that the server can tell this
   browser's own windows from others' (``sessions.Registry.candidates``);
 - the tab's own session, in its ``sessionStorage`` (``speakertime_tab``):
-  kept through a reload of that tab, and by no other tab.
+  kept through a reload of that tab, and by no other tab;
+- the tab's own random id, in its ``sessionStorage`` too
+  (``speakertime_tabid``), so that the server can tell the host's own tab,
+  reloaded, from another tab of the same browser, which holds the same
+  cookies (Terry, 2026-11-01: a host and a viewer in two tabs of one browser).
 A tab reloaded goes back to its own session (as host if it holds the token
 and no other page hosts it: Terry, 2026-10-30). A new window goes back by
 itself only when that leaves no doubt: the one session it would host, or
@@ -72,6 +76,7 @@ from streamlit.runtime import Runtime
 from streamlit.runtime.scriptrunner_utils.script_run_context import get_script_run_ctx
 
 from . import ids
+from .colours import AUTO, CLOCK_COLOURS, DARK, DEFAULT_COLOUR, LIGHT, warning_colour
 from .sessions import HOST, REGISTRY, SIZE_DEFAULT, SIZE_MAX, SIZE_MIN, SIZE_STEP, SIZED, VIEWER, Checked, Refused, Shown
 from .shared import version_text
 from .timer import CLOCK, MINUTES, MODES, limit_minutes
@@ -100,9 +105,11 @@ LEGACY_LAST_COOKIE = "speakertime_last"
 """Until 2026-11-01 the one session remembered; read once as the recent list, then removed."""
 TAB_KEY = "speakertime_tab"
 """The tab's own session, in its sessionStorage."""
+TAB_ID_KEY = "speakertime_tabid"
+"""The tab's own random id, in its sessionStorage."""
 
 _BROWSER_ID = re.compile(r"[A-Za-z0-9]{8,64}")
-"""A browser id as the page's script makes one (``_READER_JS``); anything else in the cookie is ignored."""
+"""A browser's or a tab's id as the page's script makes one (``_READER_JS``); anything else is ignored."""
 
 # The screens.
 START = "start"
@@ -116,8 +123,11 @@ _SCREEN = "screen"        # START, PENDING, HOST or VIEWER
 _SID = "sid"              # the session waited for, hosted or viewed
 _BOX = "box"              # the Session ID box
 _LIMIT_BOX = "limit_box"  # the Time Limit box (minutes)
+_WARN_BOX = "warn_box"    # the Time Left Warning box (minutes)
+_PICKER = "warn_colours"  # the warning's colour buttons: their trigger, "pick"
 _TOKENS = "tokens"        # the host's token of each session this browser hosted: {sid: token}
 _BROWSER = "browser"      # this browser's id (None if its script could not say)
+_TAB = "tab"              # this tab's id (None if its script could not say)
 _REJOIN = "rejoin"        # the sessions a new window could go back to, when it cannot tell which: [(sid, as host)]
 _NOTICE = "notice"        # a message shown once: (kind, text), kind one of st's "success", "info", "warning", "error"
 _DECLINED = "declined"    # the sessions whose "Assume Host Role?" this page answered No
@@ -127,12 +137,31 @@ _MARK = "mark"            # the page's own part of its id (_page)
 _MODE = "mode"            # this panel's way of showing the times (timer.MODES); None before it has shown a session
 _EPOCH = "epoch"          # the session's host_epoch when this panel last took the host's way
 _CLOCK = "clock"          # the clock element: its triggers, "mode" (the switch) and "size" (a slider)
+_LOST = "lost"            # the check-in's script found the clock gone from the page: lay the page out again
 
 # The clock's look. A dark panel with light figures reads well from a lectern
-# and in a small window beside the slides. Remaining turns red once the limit
-# is passed (negative). The figures are sized by their column's width (cqw: a
-# hundredth of it) times the host's size, and never wider than the column.
-_CLOCK_COLOURS = {"panel": "#111418", "figures": "#f4f6f8", "labels": "#aab2bd", "over": "#ff5a4f", "slider": "#e2483d"}
+# and in a small window beside the slides; the host may turn it white with
+# black text instead (``colours``: choosing black for a timer), and sets each
+# timer's colour for everyone. Remaining turns red, and blinks, once it shows
+# zero or less, and its label reads "Overtime" while it is negative (Terry,
+# 2026-11-01); between the Time Left Warning and zero it is in the warning's
+# colour. The figures are sized by their column's width (cqw: a hundredth of
+# it) times the host's size, and never wider than the column. The colours are
+# CSS variables on the panel (and the pop-out's body), set by the script from
+# the session's look.
+_THEMES = {
+    DARK: {"panel": "#000000", "text": "#ffffff", "line": "#6b7280", "over": "#ff5a4f"},
+    LIGHT: {"panel": "#ffffff", "text": "#000000", "line": "#9ca3af", "over": "#d1242f"},
+}
+"""Each theme's background, other text, lines (buttons' borders) and out-of-time red (darker on white, to read)."""
+
+_SLIDER_COLOUR = "#f28b82"
+"""The size slider's filled (lower) part: a light red (Terry, 2026-11-01: lighter than the red it had, #e2483d)."""
+
+_COLOUR_NAMES = {name: name.capitalize() for name in CLOCK_COLOURS}
+
+_BLINK_S = 1.0
+"""Remaining's figures and the Overtime label blink once a second: shown for half of it, faint for the other half."""
 
 _CHAR_EM = 0.62
 """The width of a character of the figures, in em, a little over a digit's (0.55 to 0.6 in the system fonts, tabular): the figures shrink to fit their column."""
@@ -156,46 +185,86 @@ _MODE_NAMES = {CLOCK: "H:MM:SS", MINUTES: "MMM.M"}
 """The switch's two buttons (Terry's names for the two ways)."""
 
 _LABELS = {
-    CLOCK: {"elapsed": "Elapsed Time", "remaining": "Time Remaining", "limit": "Time Limit"},
-    MINUTES: {"elapsed": "Elapsed Time (min)", "remaining": "Time Remaining (min)", "limit": "Time Limit (min)"},
+    CLOCK: {"elapsed": "Elapsed Time", "remaining": "Time Remaining", "limit": "Time Limit", "overtime": "Overtime",
+            "warning": "Time Left Warning"},
+    MINUTES: {"elapsed": "Elapsed Time (min)", "remaining": "Time Remaining (min)", "limit": "Time Limit (min)",
+              "overtime": "Overtime (min)", "warning": "Time Left Warning (min)"},
 }
+"""The labels in each way of showing the times; "overtime" is Remaining's while it is negative."""
 
 _MODES_HTML = '<div class="modes" role="group" aria-label="Show the times as">' + "".join(
     f'<button type="button" data-m="{mode}">{name}</button>' for mode, name in _MODE_NAMES.items()
 ) + "</div>"
 
 
-def _row(name: str, slider: bool) -> str:
-    """One row of the clock: its label and figures, and (on the host's panel) the slider for its size."""
-    kind = "limit" if name == "limit" else "timer"
-    size = (
-        f'<input class="size" type="range" data-t="{name}" min="{SIZE_MIN}" max="{SIZE_MAX}" step="{SIZE_STEP}"'
-        f' aria-label="Size of {_LABELS[CLOCK][name]} for everyone" hidden>'
-        if slider else ""
-    )
-    return (
-        f'<div class="row {kind}"><div class="cell"><span class="label" data-l="{name}"></span>'
-        f'<span class="value" data-v="{name}"></span></div>{size}</div>'
-    )
+def _cell(name: str, extra: str = "") -> str:
+    return f'<div class="cell"{extra}><span class="label" data-l="{name}"></span><span class="value" data-v="{name}"></span></div>'
 
+
+def _row(name: str, host: bool) -> str:
+    """One row of the clock: its label and figures; on the host's panel, a timer's slider for its size and buttons for its colour.
+
+    The Time Limit's row holds the Time Left Warning beside it, shown only
+    while the host has set one (Terry, 2026-11-01).
+    """
+    if name == "limit":
+        return f'<div class="row limit" data-r="limit"><div class="pair">{_cell("limit")}{_cell("warning", " data-w hidden")}</div></div>'
+    tools = ""
+    if host:
+        swatches = "".join(
+            f'<button type="button" data-c="{colour}" title="{_COLOUR_NAMES[colour]}" aria-label="{_COLOUR_NAMES[colour]}"'
+            f' style="--swatch: {hex_}"></button>'
+            for colour, hex_ in CLOCK_COLOURS.items()
+        )
+        tools = (
+            f'<input class="size" type="range" data-t="{name}" min="{SIZE_MIN}" max="{SIZE_MAX}" step="{SIZE_STEP}"'
+            f' aria-label="Size of {_LABELS[CLOCK][name]} for everyone" hidden>'
+            f'<div class="swatches" data-t="{name}" role="group" aria-label="Colour of {_LABELS[CLOCK][name]} for everyone"'
+            f' hidden>{swatches}</div>'
+        )
+    return f'<div class="row timer" data-r="{name}">{_cell(name)}{tools}</div>'
+
+
+# The colours both the panel and the pop-out take from the session's look (set by the script, ``draw``).
+_LOOK_CSS = f"""
+  --panel: {_THEMES[DARK]["panel"]}; --text: {_THEMES[DARK]["text"]}; --line: {_THEMES[DARK]["line"]};
+  --over: {_THEMES[DARK]["over"]}; --c-elapsed: {CLOCK_COLOURS[DEFAULT_COLOUR]}; --c-remaining: {CLOCK_COLOURS[DEFAULT_COLOUR]};
+  --c-warning: {warning_colour(AUTO, dict.fromkeys(SIZED, DEFAULT_COLOUR))};
+  background: var(--panel); color: var(--text);
+"""
+
+# Rules the panel and the pop-out share: the figures' colours, red, blinking, the warning's figures.
+_SHARED_CSS = f"""
+.value[data-v="elapsed"] {{ color: var(--c-elapsed); }}
+.value[data-v="remaining"] {{ color: var(--c-remaining); }}
+.value[data-v="warning"], .value.warn {{ color: var(--c-warning); }}
+.over {{ color: var(--over); }}
+.value.over {{ color: var(--over); }}
+.blink {{ animation: speakertime-blink {_BLINK_S}s steps(1, end) infinite; }}
+@keyframes speakertime-blink {{ 50% {{ opacity: 0.15; }} }}
+.pair {{ display: flex; justify-content: center; container-type: inline-size; }}
+.pair .cell {{ flex: 1 1 0; container-type: normal; }}
+.pair .cell[hidden] {{ display: none; }}
+.modes button.on {{ background: var(--text); color: var(--panel); }}
+"""
 
 _PIP_HTML = "".join(_row(name, False) for name in ("elapsed", "remaining", "limit")) + _MODES_HTML
 
 _PIP_CSS = f"""
-  html, body {{ margin: 0; height: 100%; background: {_CLOCK_COLOURS["panel"]}; color: {_CLOCK_COLOURS["figures"]};
-    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }}
-  body {{ display: flex; flex-direction: column; justify-content: center; gap: 1vh; overflow: hidden; }}
+  html {{ height: 100%; }}
+  body {{ {_LOOK_CSS} margin: 0; height: 100%; font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    display: flex; flex-direction: column; justify-content: center; gap: 1vh; overflow: hidden; }}
   .cell {{ display: flex; flex-direction: column; align-items: center; line-height: 1; }}
-  .label {{ font-size: min(5vw, 6vh); color: {_CLOCK_COLOURS["labels"]}; margin-bottom: 0.6vh; }}
+  .label {{ font-size: min(5vw, 6vh); margin-bottom: 0.6vh; }}
   .value {{ --scale: 1; --chars: 4; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap;
     font-size: min(calc(var(--scale) * min(19vw, 27vh)), calc(96vw / (var(--chars) * {_CHAR_EM}))); }}
   .limit .value {{ font-size: min(7vw, 9vh); font-weight: 600; }}
-  .over {{ color: {_CLOCK_COLOURS["over"]}; }}
-  .modes {{ align-self: center; display: inline-flex; border: 1px solid {_CLOCK_COLOURS["labels"]}; border-radius: 6px;
+  .row[data-r="remaining"], .row[data-r="limit"] {{ margin-top: 3vh; }}
+  {_SHARED_CSS}
+  .modes {{ align-self: center; display: inline-flex; border: 1px solid var(--line); border-radius: 6px;
     overflow: hidden; margin-top: 0.5vh; }}
-  .modes button {{ font: inherit; font-size: max(10px, min(3.4vw, 4.2vh)); color: {_CLOCK_COLOURS["labels"]};
+  .modes button {{ font: inherit; font-size: max(10px, min(3.4vw, 4.2vh)); color: var(--text);
     background: transparent; border: 0; padding: 0.3vh 1.6vw; cursor: pointer; }}
-  .modes button.on {{ background: {_CLOCK_COLOURS["figures"]}; color: {_CLOCK_COLOURS["panel"]}; }}
 """
 
 _HUB_JS = f"""
@@ -206,6 +275,9 @@ const CLOCK = {json.dumps(CLOCK)};
 const MINUTES = {json.dumps(MINUTES)};
 const SIZE_DEFAULT = {SIZE_DEFAULT};
 const LABELS = {json.dumps(_LABELS)};
+const THEMES = {json.dumps(_THEMES)};
+const DARK = {json.dumps(DARK)};
+const LIGHT = {json.dumps(LIGHT)};
 const PIP_HTML = {json.dumps(_PIP_HTML)};
 const PIP_CSS = {json.dumps(_PIP_CSS)};
 
@@ -237,7 +309,13 @@ const hub = () => (window.speakerTime ??= {{
   lastSync: 0,      // when a check-in last arrived
   lastKick: 0,      // when the pop-out last asked for one
   kick: null,       // asks for a check-in (the latest sync element's trigger)
+  clock: null,      // the panel's clock (the .clock element) as last laid out
+  panelTimer: null, // the page's one timer drawing it (_CLOCK_JS)
+  send: null,       // the clock element's trigger, as the latest run gave it
+  missing: 0,       // check-ins running that found it gone from the page (_SYNC_JS)
   pip: null,        // the pop-out window, while open
+  opening: false,   // a pop-out asked for and not yet given
+  pipOpenedAt: -Infinity,  // when the pop-out last opened (performance.now())
   pageMode: CLOCK,  // the panel's way of showing the times (the page's own switch)
   pipMode: CLOCK,   // the pop-out's (its own switch; the panel's when it opened)
   preview: {{}},     // the host's slider while dragged, before the size comes back from the server
@@ -254,13 +332,20 @@ const hub = () => (window.speakerTime ??= {{
       }}
     }}
     this.base = {{ sid: reading.sid, elapsed: reading.elapsed, running: reading.running, limit: reading.limit,
-                  version: reading.version, sizes: reading.sizes ?? {{}}, at }};
+                  warning: reading.warning ?? null, version: reading.version, sizes: reading.sizes ?? {{}},
+                  look: reading.look ?? null, at }};
     this.lastSync = at;
   }},
 
   // The three texts now, as timer.elapsed_shown and remaining_shown (CLOCK),
   // or elapsed_tenths and remaining_tenths (MINUTES). The limit is a whole
   // number of tenths of a minute (6 s each), so the two still add up to it.
+  // "out": Remaining shows zero or less, with a limit set (red, blinking);
+  // "over": it shows less than zero (its label "Overtime" too). Both go by
+  // the figures as shown, so MMM.M is out from "0.0" (Terry, 2026-11-01:
+  // "when the display is zero"). "warn": it shows no more than the Time Left
+  // Warning, and more than zero (the warning's colour); "warning" the
+  // warning's own figures (null for none).
   texts(mode) {{
     const b = this.base;
     if (b === null) return null;
@@ -269,33 +354,72 @@ const hub = () => (window.speakerTime ??= {{
     if (mode === MINUTES) {{
       const tenths = Math.floor(shown / 6);
       const limit = b.limit === null ? null : Math.round(b.limit / 6);
+      const warning = b.warning === null ? null : Math.round(b.warning / 6);
       const remaining = limit === null ? 0 : limit - tenths;
       return {{ elapsed: minutes(tenths), remaining: minutes(remaining), over: remaining < 0,
-               limit: limit === null ? "none" : minutes(limit) }};
+               out: limit !== null && remaining <= 0, limit: limit === null ? "none" : minutes(limit),
+               warn: limit !== null && warning !== null && remaining > 0 && remaining <= warning,
+               warning: warning === null ? null : minutes(warning) }};
     }}
     const remaining = b.limit === null ? 0 : b.limit - shown;
     return {{ elapsed: clock(shown), remaining: clock(remaining), over: remaining < 0,
-             limit: b.limit === null ? "none" : clock(b.limit) }};
+             out: b.limit !== null && remaining <= 0, limit: b.limit === null ? "none" : clock(b.limit),
+             warn: b.limit !== null && b.warning !== null && remaining > 0 && remaining <= b.warning,
+             warning: b.warning === null ? null : clock(b.warning) }};
   }},
 
-  // Draw the texts, labels and sizes into a panel or the pop-out.
+  // The session's look on a panel (the .clock element) or the pop-out (its body): the theme's colours and the timers'.
+  paint(box) {{
+    const look = this.base.look;
+    if (look === null) return;
+    const key = JSON.stringify(look);
+    if (box.dataset.look === key) return;
+    box.dataset.look = key;
+    const theme = THEMES[look.theme] ?? THEMES[DARK];
+    for (const [name, value] of Object.entries(theme)) box.style.setProperty("--" + name, value);
+    box.style.setProperty("--c-elapsed", look.elapsed);
+    box.style.setProperty("--c-remaining", look.remaining);
+    box.style.setProperty("--c-warning", look.warning);
+    box.classList.toggle("light", look.theme === LIGHT);
+    for (const group of box.querySelectorAll(".swatches")) {{
+      for (const button of group.querySelectorAll("button")) {{
+        button.classList.toggle("on", button.dataset.c === look.names[group.dataset.t]);
+      }}
+    }}
+  }},
+
+  // Draw the texts, labels, sizes and colours into a panel (root: the .clock element) or the pop-out (its document).
   draw(root, mode) {{
     const t = this.texts(mode);
     if (t === null) return;
-    for (const name of ["elapsed", "remaining", "limit"]) {{
+    this.paint(root.body ?? root);
+    const warningCell = root.querySelector("[data-w]");
+    if (warningCell !== null) warningCell.hidden = t.warning === null;
+    for (const name of ["elapsed", "remaining", "limit", "warning"]) {{
+      if (name === "warning" && t.warning === null) continue;
       const value = root.querySelector('[data-v="' + name + '"]');
       const label = root.querySelector('[data-l="' + name + '"]');
-      if (label !== null && label.textContent !== LABELS[mode][name]) label.textContent = LABELS[mode][name];
+      if (label !== null) {{
+        const overtime = name === "remaining" && t.over;
+        const text = LABELS[mode][overtime ? "overtime" : name];
+        if (label.textContent !== text) label.textContent = text;
+        label.classList.toggle("over", overtime);
+        label.classList.toggle("blink", overtime);
+      }}
       if (value === null) continue;
       if (value.textContent !== t[name]) {{
         value.textContent = t[name];
         value.style.setProperty("--chars", String(Math.max(4, t[name].length)));
       }}
-      if (name !== "limit") {{
+      if (name === "elapsed" || name === "remaining") {{
         const scale = String((this.preview[name] ?? this.base.sizes[name] ?? SIZE_DEFAULT) / 100);
         if (value.style.getPropertyValue("--scale") !== scale) value.style.setProperty("--scale", scale);
       }}
-      if (name === "remaining") value.classList.toggle("over", t.over);
+      if (name === "remaining") {{
+        value.classList.toggle("over", t.out);
+        value.classList.toggle("blink", t.out);
+        value.classList.toggle("warn", t.warn);
+      }}
     }}
     for (const button of root.querySelectorAll(".modes button")) button.classList.toggle("on", button.dataset.m === mode);
   }},
@@ -328,6 +452,7 @@ const hub = () => (window.speakerTime ??= {{
     win.setInterval(tick, DRAW_MS);
     win.addEventListener("pagehide", () => {{ if (h.pip === win) h.pip = null; }});
     h.pip = win;
+    h.pipOpenedAt = performance.now();
   }},
 }});
 """
@@ -342,44 +467,72 @@ _CLOCK_HTML = (
 
 _CLOCK_CSS = f"""
 .clock {{
-  background: {_CLOCK_COLOURS["panel"]}; color: {_CLOCK_COLOURS["figures"]};
-  border-radius: 14px; padding: 14px 8px 12px;
+  {_LOOK_CSS}
+  border-radius: 14px; padding: 14px 8px 12px; box-shadow: inset 0 0 0 1px var(--line);
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 }}
 .row {{ display: grid; grid-template-columns: minmax(0, 1fr); margin-bottom: 10px; }}
-.clock.host .row {{ grid-template-columns: 30px minmax(0, 1fr) 30px; }}
+.clock.host .row {{ grid-template-columns: 56px minmax(0, 1fr) 30px 26px; }}
 .cell {{ grid-column: 1; container-type: inline-size; min-width: 0;
   display: flex; flex-direction: column; align-items: center; line-height: 1; }}
-.clock.host .cell {{ grid-column: 2; }}
+.pair {{ grid-column: 1; min-width: 0; }}
+.clock.host .row > .cell, .clock.host .pair {{ grid-column: 2; }}
 .size {{ grid-column: 3; justify-self: center; align-self: stretch; margin: 0; width: 22px; min-height: 64px;
-  writing-mode: vertical-lr; direction: rtl; accent-color: {_CLOCK_COLOURS["slider"]}; cursor: ns-resize; }}
-.size[hidden] {{ display: none; }}
-.label {{ font-size: clamp(14px, 4.6cqw, 24px); color: {_CLOCK_COLOURS["labels"]}; margin-bottom: 4px; }}
+  writing-mode: vertical-lr; direction: rtl; accent-color: {_SLIDER_COLOUR}; cursor: ns-resize; }}
+.size[hidden], .swatches[hidden] {{ display: none; }}
+.swatches {{ grid-column: 4; align-self: center; display: flex; flex-direction: column; align-items: center; gap: 5px; }}
+.swatches button {{ width: 17px; height: 17px; padding: 0; border-radius: 50%; cursor: pointer;
+  background: var(--swatch); border: 1px solid var(--line); }}
+.swatches button.on {{ outline: 2px solid var(--text); outline-offset: 2px; }}
+.label {{ font-size: clamp(14px, 4.6cqw, 24px); margin-bottom: 4px; }}
 .value {{ --scale: 1; --chars: 4; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap;
   font-size: min(calc(var(--scale) * clamp(40px, 21cqw, 150px)), calc(100cqw / (var(--chars) * {_CHAR_EM}))); }}
 .limit .value {{ font-size: clamp(22px, 7.6cqw, 54px); font-weight: 600; }}
-.over {{ color: {_CLOCK_COLOURS["over"]}; }}
+.limit .label {{ font-size: clamp(14px, 3.6cqw, 22px); }}
+.row[data-r="remaining"], .row[data-r="limit"] {{ margin-top: 20px; }}
+{_SHARED_CSS}
 .tools {{ display: flex; justify-content: center; align-items: center; flex-wrap: wrap; gap: 8px 12px; margin-top: 4px; }}
-.modes {{ display: inline-flex; border: 1px solid {_CLOCK_COLOURS["labels"]}; border-radius: 8px; overflow: hidden; }}
-.modes button {{ font: inherit; font-size: 14px; color: {_CLOCK_COLOURS["labels"]}; background: transparent; border: 0;
+.modes {{ display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }}
+.modes button {{ font: inherit; font-size: 14px; color: var(--text); background: transparent; border: 0;
   padding: 4px 10px; cursor: pointer; }}
-.modes button.on {{ background: {_CLOCK_COLOURS["figures"]}; color: {_CLOCK_COLOURS["panel"]}; }}
 .pop {{
-  font: inherit; font-size: 14px; color: {_CLOCK_COLOURS["figures"]}; background: transparent;
-  border: 1px solid {_CLOCK_COLOURS["labels"]}; border-radius: 8px; padding: 4px 12px; cursor: pointer;
+  font: inherit; font-size: 14px; color: var(--text); background: transparent;
+  border: 1px solid var(--line); border-radius: 8px; padding: 4px 12px; cursor: pointer;
 }}
-.pop:hover {{ border-color: {_CLOCK_COLOURS["figures"]}; }}
-.note {{ font-size: 13px; color: {_CLOCK_COLOURS["labels"]}; text-align: center; margin-top: 6px; }}
+.pop:hover {{ border-color: var(--text); }}
+.note {{ font-size: 13px; text-align: center; margin-top: 6px; }}
 """
 
 _POP_OPEN = "Pop out (stays on top)"
 _POP_CLOSE = "Close the pop-out"
+
+_LOST_AFTER = 2
+"""Check-ins running that find the clock gone from the page before the page is asked for again (Streamlit's whole run).
+
+Measured 2026-11-03 (Chrome on Buddug, verify_browser, the same with
+v1.1's code): a whole run of the host's page, as a slider let go makes,
+sometimes left the clock out of the page for good, everything else laid
+out and nothing in the console, and the check-ins (a fragment's runs) never
+lay it out again. Two, not one: the clock is missing for a moment while a
+whole run lays it out again, and that is not a loss.
+"""
+
+_POP_GUARD_MS = 1000
+"""A click on the pop-out's button this soon after the pop-out opened is ignored: a double click would close it at once.
+
+Terry (2026-11-01) saw a pop-out "appear then immediately disappear". Two
+causes are possible and both are dealt with or told: a double click (this),
+and a second pop-out opened from another tab or window of the same browser,
+which Chrome allows one of at a time, closing the first (measured
+2026-11-03; the README says so).
+"""
 
 _CLOCK_JS = (
     _HUB_JS
     + f"""
 const POP_OPEN = {json.dumps(_POP_OPEN)};
 const POP_CLOSE = {json.dumps(_POP_CLOSE)};
+const POP_GUARD_MS = {_POP_GUARD_MS};
 
 // The Document Picture-in-Picture API of the top window: a pop-out may be
 // opened only from a top-level page (Chrome: "only allowed from a top-level
@@ -395,35 +548,68 @@ const pipApi = () => {{
   }}
 }};
 
+// The panel as it is now (h.clock, the element last laid out): drawn every
+// DRAW_MS by the page's one timer.
+const drawPanel = (h) => {{
+  const root = h.clock;
+  if (root === null || !root.isConnected) return;
+  h.draw(root, h.pageMode);
+  const pop = root.querySelector(".pop");
+  const label = h.pip !== null ? POP_CLOSE : POP_OPEN;
+  if (pop.textContent !== label) pop.textContent = label;
+}};
+
+// Called again with each run's data (Streamlit 1.64 components v2), on the
+// same element or a new one, and the cleanup a call returns is not called
+// between calls: measured 2026-11-03, a timer started at each call made 210
+// draws a second after 20 runs. So each call takes the run's data, the
+// buttons' listeners are added once per element (sending through h.send,
+// the latest call's), and the page has one timer (h.panelTimer).
 export default function (component) {{
   const {{ data, parentElement, setTriggerValue }} = component;
   const h = hub();
   h.update(data);
   h.pageMode = data.mode;
-  h.preview = {{}};  // the sizes laid out with this element are the server's
+  h.preview = {{}};  // the sizes laid out with this run are the server's
+  h.send = setTriggerValue;
   const root = parentElement.querySelector(".clock");
+  h.clock = root;
   root.classList.toggle("host", data.host);
-  const pop = root.querySelector(".pop");
-  const note = root.querySelector(".note");
-  const draw = () => {{
-    h.draw(root, h.pageMode);
-    const label = h.pip !== null ? POP_CLOSE : POP_OPEN;
-    if (pop.textContent !== label) pop.textContent = label;
-  }};
-
-  // The host's sliders: shown at once while dragged, sent when let go.
   if (data.host) {{
     for (const slider of root.querySelectorAll("input.size")) {{
-      const name = slider.dataset.t;
-      slider.value = String(data.sizes[name]);
+      slider.value = String(data.sizes[slider.dataset.t]);
       slider.hidden = false;
-      slider.addEventListener("input", () => {{
-        h.preview[name] = Number(slider.value);
-        draw();
-      }});
-      slider.addEventListener("change", () => {{
-        h.preview[name] = Number(slider.value);
-        setTriggerValue("size", {{ timer: name, percent: Number(slider.value) }});
+    }}
+    for (const group of root.querySelectorAll(".swatches")) group.hidden = false;
+  }}
+  h.panelTimer ??= setInterval(() => drawPanel(h), DRAW_MS);
+  if (root.dataset.wired !== "1") {{
+    root.dataset.wired = "1";
+    wire(h, root);
+  }}
+  drawPanel(h);
+}}
+
+function wire(h, root) {{
+  const note = root.querySelector(".note");
+  // The host's sliders: shown at once while dragged, sent when let go.
+  for (const slider of root.querySelectorAll("input.size")) {{
+    const name = slider.dataset.t;
+    slider.addEventListener("input", () => {{
+      h.preview[name] = Number(slider.value);
+      drawPanel(h);
+    }});
+    slider.addEventListener("change", () => {{
+      h.preview[name] = Number(slider.value);
+      h.send("size", {{ timer: name, percent: Number(slider.value) }});
+    }});
+  }}
+  // The colour buttons beside each slider: the server applies Terry's rule for black and white.
+  for (const group of root.querySelectorAll(".swatches")) {{
+    for (const button of group.querySelectorAll("button")) {{
+      button.addEventListener("click", () => {{
+        if (button.classList.contains("on")) return;
+        h.send("colour", {{ timer: group.dataset.t, colour: button.dataset.c }});
       }});
     }}
   }}
@@ -433,46 +619,58 @@ export default function (component) {{
     button.addEventListener("click", () => {{
       if (h.pageMode === button.dataset.m) return;
       h.pageMode = button.dataset.m;
-      draw();
-      setTriggerValue("mode", button.dataset.m);
+      drawPanel(h);
+      h.send("mode", button.dataset.m);
     }});
   }}
 
+  const pop = root.querySelector(".pop");
   const api = pipApi();
   if (api !== null) {{
     pop.hidden = false;
     pop.addEventListener("click", async () => {{
+      // A second click while the pop-out is coming, or just after it came (a
+      // double click), would close it again at once: ignored.
+      if (h.opening || performance.now() - h.pipOpenedAt < POP_GUARD_MS) return;
       note.hidden = true;
       if (h.pip !== null) {{
         h.pip.close();
         return;
       }}
+      h.opening = true;
       try {{
         h.openPip(await api.requestWindow({{ width: 340, height: 280 }}));
       }} catch (error) {{
         note.textContent = "The pop-out could not be opened: " + error.message;
         note.hidden = false;
+      }} finally {{
+        h.opening = false;
       }}
     }});
   }}
-  draw();
-  const timer = setInterval(draw, DRAW_MS);
-  return () => clearInterval(timer);
 }}
 """
 )
 
 # The check-in's reading for the clock, from inside the fragment (rebuilt at
-# each check-in). It also leaves the pop-out a way to ask for a check-in.
+# each check-in). It also leaves the pop-out a way to ask for a check-in, and
+# asks for the whole page again when the clock has gone from it (_LOST_AFTER).
 _SYNC_JS = (
     _HUB_JS
-    + """
-export default function (component) {
-  const { data, setTriggerValue } = component;
+    + f"""
+const LOST_AFTER = {_LOST_AFTER};
+
+export default function (component) {{
+  const {{ data, setTriggerValue }} = component;
   const h = hub();
   h.update(data);
   h.kick = () => setTriggerValue("tick", Date.now());
-}
+  h.missing = h.clock !== null && h.clock.isConnected ? 0 : h.missing + 1;
+  if (h.missing >= LOST_AFTER) {{
+    h.missing = 0;
+    setTriggerValue("lost", Date.now());
+  }}
+}}
 """
 )
 
@@ -480,9 +678,14 @@ export default function (component) {
 # ratesplot's reader, batch 24.6: through the page's own script, since on
 # Streamlit Community Cloud the proxy filters cookies from st.context.cookies).
 # The cookies by name ("" for one not set), the tab's own session from its
-# sessionStorage ("" for none), and the browser's id, made and kept if the
-# browser had none. Sent once; the page starts from it on the run that follows.
+# sessionStorage ("" for none), and the browser's and the tab's ids, each made
+# and kept if there was none. Sent once; the page starts from it on the run
+# that follows.
 _READER_JS = """
+const randomId = () => (typeof crypto !== "undefined" && crypto.randomUUID
+  ? crypto.randomUUID().replace(/-/g, "")
+  : Math.random().toString(36).slice(2) + Date.now().toString(36)).slice(0, 24);
+
 export default function (component) {
   const { data, setTriggerValue } = component;
   const cookies = {};
@@ -504,16 +707,23 @@ export default function (component) {
   }
   let browser = cookies[data.browser] || "";
   if (!/^[A-Za-z0-9]{8,64}$/.test(browser)) {
-    const random = typeof crypto !== "undefined" && crypto.randomUUID
-      ? crypto.randomUUID().replace(/-/g, "")
-      : Math.random().toString(36).slice(2) + Date.now().toString(36);
-    browser = random.slice(0, 24);
+    browser = randomId();
     try {
       document.cookie = data.browser + "=" + browser + "; max-age=" + data.seconds + "; path=/; SameSite=Lax"
         + (location.protocol === "https:" ? "; Secure" : "");
     } catch (error) {}  // no cookies for this page: the id lasts this visit
   }
-  setTriggerValue("cookies", { cookies, tab, browser });
+  let tabid = "";
+  try {
+    tabid = sessionStorage.getItem(data.tabid) ?? "";
+    if (!/^[A-Za-z0-9]{8,64}$/.test(tabid)) {
+      tabid = randomId();
+      sessionStorage.setItem(data.tabid, tabid);
+    }
+  } catch (error) {
+    tabid = "";  // no storage for this page: the server cannot tell its tab
+  }
+  setTriggerValue("cookies", { cookies, tab, browser, tabid });
 }
 """
 
@@ -606,6 +816,46 @@ _LIMIT_HELP = (
     "Time Remaining is the Time Limit minus Elapsed Time, and goes negative once the limit is passed. "
     "Blank, 0 or a negative number: no limit, and Time Remaining stays at zero."
 )
+_WARNING_HELP = (
+    "Minutes, to one decimal place, or blank for none. Shown beside the Time Limit on every panel and pop-out. "
+    "While Time Remaining is this many minutes or fewer, and more than zero, it takes the warning's colour. "
+    "The buttons on the right set that colour: the first, A, is green (or, when Time Remaining is in a colour, "
+    "the colour opposite it); the others are four more."
+)
+
+# The warning's colour buttons (``Shown.warning_buttons``), beside its box on the host's page: laid out again at each run.
+_PICKER_HTML = (
+    '<div class="picks-box"><div class="picks-label">Warning colour</div>'
+    '<div class="picks" role="group" aria-label="Colour of the Time Left Warning"></div></div>'
+)
+_PICKER_CSS = """
+.picks-box { font-family: "Source Sans Pro", "Source Sans 3", system-ui, sans-serif; }
+.picks-label { font-size: 14px; line-height: 1.6; margin-bottom: 0.5rem; }
+.picks { display: flex; align-items: center; gap: 7px; height: 2.5rem; }
+.picks button { width: 22px; height: 22px; padding: 0; border-radius: 50%; cursor: pointer; background: var(--swatch);
+  border: 1px solid #9ca3af; font: 600 11px system-ui, sans-serif; color: #000; }
+.picks button.on { outline: 2px solid #31333f; outline-offset: 2px; }
+"""
+_PICKER_JS = """
+export default function (component) {
+  const { data, parentElement, setTriggerValue } = component;
+  const row = parentElement.querySelector(".picks");
+  row.replaceChildren();
+  for (const [name, hex] of data.buttons) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.dataset.c = name;
+    button.title = name === data.auto ? "A: green, or the colour opposite Time Remaining's" : name[0].toUpperCase() + name.slice(1);
+    button.setAttribute("aria-label", button.title);
+    button.style.setProperty("--swatch", hex);
+    button.classList.toggle("on", name === data.chosen);
+    if (name === data.auto) button.textContent = "A";
+    button.addEventListener("click", () => { if (name !== data.chosen) setTriggerValue("pick", name); });
+    row.appendChild(button);
+  }
+}
+"""
+
 _COOKIE_NOTE = (
     "This page keeps small cookies in your browser: the sessions you were in, the host key of a session you hosted, "
     "and a random id for this browser, so that a reload or a return reconnects you. Leave Session forgets the session."
@@ -640,6 +890,10 @@ def _tokens() -> dict[str, str]:
 
 def _browser() -> str | None:
     return st.session_state.get(_BROWSER)
+
+
+def _tab() -> str | None:
+    return st.session_state.get(_TAB)
 
 
 def _mode() -> str | None:
@@ -680,15 +934,16 @@ def _enter(sid: str, checked: Checked) -> None:
             _tokens()[sid] = checked.token
         host = (sid, token) if token else None
         state[_LIMIT_BOX] = checked.shown.limit
+        state[_WARN_BOX] = checked.shown.warning
     _cookie_change(sid, first=sid, host=host)
 
 
 def _join(sid: str) -> Checked | None:
-    return REGISTRY.join(sid, _page(), _tokens().get(sid), _browser(), _mode())
+    return REGISTRY.join(sid, _page(), _tokens().get(sid), _browser(), _mode(), _tab())
 
 
 def _check_in(sid: str) -> Checked | None:
-    return REGISTRY.check_in(sid, _page(), _tokens().get(sid), _browser(), _mode())
+    return REGISTRY.check_in(sid, _page(), _tokens().get(sid), _browser(), _mode(), _tab())
 
 
 # -- what the browser keeps, read at the visit's start ------------------------------
@@ -705,6 +960,8 @@ class Heard:
     """The host token of each session hosted from this browser."""
     browser: str | None = None
     """The browser's id."""
+    tabid: str | None = None
+    """The tab's id."""
 
 
 def _cookies_read() -> None:
@@ -755,6 +1012,8 @@ def heard_cookies(sent: object) -> Heard:
                 heard.hosts[sid] = token
     browser = sent.get("browser")
     heard.browser = browser if isinstance(browser, str) and _BROWSER_ID.fullmatch(browser) else None
+    tabid = sent.get("tabid")
+    heard.tabid = tabid if isinstance(tabid, str) and _BROWSER_ID.fullmatch(tabid) else None
     return heard
 
 
@@ -771,6 +1030,7 @@ def _start_visit() -> None:
     heard = heard_cookies(state.get(_HEARD))
     _tokens().update(heard.hosts)
     state[_BROWSER] = heard.browser
+    state[_TAB] = heard.tabid
     if heard.tab is not None:
         # A reload of a tab that was in a session: that session, and no other.
         checked = _join(heard.tab)
@@ -816,7 +1076,7 @@ def _create() -> None:
         _notify("error", problem)
         return
     try:
-        sid, token, notice = REGISTRY.create(sid or None, _page(), _browser(), _mode())
+        sid, token, notice = REGISTRY.create(sid or None, _page(), _browser(), _mode(), _tab())
     except Refused as refusal:
         _notify("error", str(refusal))
         return
@@ -918,10 +1178,40 @@ def _size_changed() -> None:
         _notify("error", f"The size was not changed: {problem}.")
 
 
+def _colour_changed() -> None:
+    """The host has pressed a colour button beside a slider: that timer's colour, for every panel and pop-out."""
+    sent = _clock_sent("colour")
+    try:
+        if not isinstance(sent, dict):
+            raise ValueError(f"not a colour: {sent!r}")
+        REGISTRY.set_colour(st.session_state.get(_SID), _page(), sent.get("timer"), sent.get("colour"))
+    except Refused as refusal:
+        _notify("error", str(refusal))
+    except ValueError as problem:
+        _notify("error", f"The colour was not changed: {problem}.")
+
+
+def _warning_changed() -> None:
+    warning = limit_minutes(st.session_state.get(_WARN_BOX))
+    st.session_state[_WARN_BOX] = warning  # shown as it is used: to a tenth
+    _control("warning", warning)
+
+
+def _warning_colour_picked() -> None:
+    """The host has pressed one of the warning's colour buttons."""
+    choice = (st.session_state.get(_PICKER) or {}).get("pick")
+    try:
+        REGISTRY.set_warning_colour(st.session_state.get(_SID), _page(), choice)
+    except Refused as refusal:
+        _notify("error", str(refusal))
+    except ValueError as problem:
+        _notify("error", f"The warning's colour was not changed: {problem}.")
+
+
 def _assume_host() -> None:
     sid = st.session_state.get(_SID)
     try:
-        token = REGISTRY.assume_host(sid, _page(), _mode())
+        token = REGISTRY.assume_host(sid, _page(), _mode(), _tab())
     except Refused as refusal:
         _notify("error", str(refusal))
         return
@@ -938,6 +1228,11 @@ def _decline_host() -> None:
 
 def _ticked() -> None:
     """The pop-out asked for a check-in: the fragment's run is the check-in."""
+
+
+def _clock_lost() -> None:
+    """The check-in's script has found the clock gone from the page (``_LOST_AFTER``): the fragment's run lays the whole page out again."""
+    st.session_state[_LOST] = True
 
 
 # -- the screens ------------------------------------------------------------------
@@ -987,18 +1282,29 @@ def _session_screen(sid: str, checked: Checked) -> None:
     st.fragment(_live, run_every=datetime.timedelta(seconds=CHECK_IN_S))(sid, role)
     clock = st.components.v2.component("speakertime_clock", html=_CLOCK_HTML, css=_CLOCK_CSS, js=_CLOCK_JS)
     data = {"sid": sid, **checked.shown.for_script(), "mode": _mode() or checked.shown.host_mode, "host": role == HOST}
-    clock(key=_CLOCK, data=data, on_mode_change=_mode_changed, on_size_change=_size_changed)
+    clock(key=_CLOCK, data=data, on_mode_change=_mode_changed, on_size_change=_size_changed, on_colour_change=_colour_changed)
     if role == HOST:
         _host_controls(checked.shown)
     st.button("Leave Session", on_click=_leave)
 
 
 def _host_controls(shown: Shown) -> None:
+    """The Time Limit, and to its right the Time Left Warning and its colour buttons (Terry, 2026-11-01); Start, Stop and Reset."""
     st.session_state.setdefault(_LIMIT_BOX, shown.limit)
-    st.number_input(
+    st.session_state.setdefault(_WARN_BOX, shown.warning)
+    row = st.container(horizontal=True, vertical_alignment="bottom", wrap=True)
+    row.number_input(
         "Time Limit (minutes)", key=_LIMIT_BOX, min_value=None, step=1.0, format="%.1f",
-        help=_LIMIT_HELP, placeholder="Blank: no limit", on_change=_limit_changed,
+        help=_LIMIT_HELP, placeholder="Blank: no limit", on_change=_limit_changed, width=200,
     )
+    row.number_input(
+        "Time Left Warning (minutes)", key=_WARN_BOX, min_value=None, step=1.0, format="%.1f",
+        help=_WARNING_HELP, placeholder="Blank: none", on_change=_warning_changed, width=220,
+    )
+    buttons, chosen = shown.warning_buttons()
+    picker = st.components.v2.component("speakertime_warn_colours", html=_PICKER_HTML, css=_PICKER_CSS, js=_PICKER_JS)
+    with row:
+        picker(key=_PICKER, data={"buttons": buttons, "chosen": chosen, "auto": AUTO}, on_pick_change=_warning_colour_picked)
     row = st.container(horizontal=True)
     # A button that would do nothing is greyed (ratesplot's rule: grey what has no effect).
     row.button("Start", on_click=_control, args=("start",), disabled=shown.running, type="primary")
@@ -1015,9 +1321,10 @@ def _live(sid: str, role: str) -> None:
     the whole page out again.
     """
     state = st.session_state
-    if state.get(_SCREEN) != role or state.get(_SID) != sid:
-        # A button in this fragment (Yes) has changed the screen: its click
-        # reran the fragment alone, so the page is laid out again here.
+    if state.get(_SCREEN) != role or state.get(_SID) != sid or state.pop(_LOST, False):
+        # A button in this fragment (Yes) has changed the screen, or the clock
+        # has gone from the page: the click reran the fragment alone, so the
+        # page is laid out again here.
         st.rerun(scope="app")
     checked = _check_in(sid)
     if checked is None:
@@ -1039,7 +1346,8 @@ def _live(sid: str, role: str) -> None:
     # must see every check-in arrive to know when to ask for one.
     state[_BEAT] = state.get(_BEAT, 0) + 1
     sync = st.components.v2.component("speakertime_sync", js=_SYNC_JS)
-    sync(key="sync", data={"sid": sid, "beat": state[_BEAT], **checked.shown.for_script()}, on_tick_change=_ticked)
+    sync(key="sync", data={"sid": sid, "beat": state[_BEAT], **checked.shown.for_script()}, on_tick_change=_ticked,
+         on_lost_change=_clock_lost)
     shown = checked.shown
     if role == HOST:
         viewers = "1 viewer" if shown.viewers == 1 else f"{shown.viewers} viewers"
@@ -1092,7 +1400,7 @@ def main() -> None:
         reader(
             key=_READER,
             data={"names": [RECENT_COOKIE, HOSTS_COOKIE, BROWSER_COOKIE, LEGACY_LAST_COOKIE], "tab": TAB_KEY,
-                  "browser": BROWSER_COOKIE, "seconds": _BROWSER_DAYS * 86400},
+                  "tabid": TAB_ID_KEY, "browser": BROWSER_COOKIE, "seconds": _BROWSER_DAYS * 86400},
             on_cookies_change=_cookies_read,
         )
         st.caption("Starting …")

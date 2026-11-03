@@ -7,14 +7,19 @@ checked to the second. Prints each failure and a count; exits 1 on any.
 
 from __future__ import annotations
 
+import contextlib
+import io
+import json
 import sys
+import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from speakertime import ids  # noqa: E402
+from speakertime import colours, ids  # noqa: E402
+from speakertime.colours import BLACK, DARK, LIGHT, WHITE  # noqa: E402
 from speakertime.sessions import (  # noqa: E402
-    EXPIRE_AFTER_S, HOST, HOST_GRACE_S, SIZE_DEFAULT, SIZE_MAX, SIZE_MIN, VIEWER, Refused, Registry,
+    EXPIRE_AFTER_S, HOST, HOST_GRACE_S, SIZE_DEFAULT, SIZE_MAX, SIZE_MIN, VIEWER, Refused, Registry, Settings,
 )
 from speakertime.timer import (  # noqa: E402
     CLOCK, MINUTES, Timer, clock_text, elapsed_shown, elapsed_tenths, limit_minutes, limit_seconds, minutes_text,
@@ -308,11 +313,168 @@ def display_checks() -> None:
     check("no browser id: nothing is open here", [sid for sid, _ in reg2.candidates(["CHARLIE"], "W3", None, {})], ["CHARLIE"])
 
 
+def tab_checks() -> None:
+    """A host and a viewer in two tabs of one browser, both holding the host's token (Terry, 2026-11-01, item 3)."""
+    clock = Clock()
+    on: set[str] = set()
+    reg = Registry(clock=clock, connected=lambda page: page in on)
+    on.update({"H1", "V1"})
+    _, token, _ = reg.create("TABS", "H1", "browser", None, "tab-h")
+    check("the viewer's tab, with the browser's token: a viewer", reg.join("TABS", "V1", token, "browser", None, "tab-v").role, VIEWER)
+    # The host's tab reloads: its old page closes, and the viewer's tab checks in before the new page joins.
+    on.discard("H1")
+    clock.step(1.0)
+    check("the host's tab reloading: the viewer's tab stays a viewer",
+          reg.check_in("TABS", "V1", token, "browser", None, "tab-v").role, VIEWER)
+    on.add("H2")
+    check("the host's tab, reloaded, hosts", reg.join("TABS", "H2", token, "browser", None, "tab-h").role, HOST)
+    # Reloaded again, joining while its old page still seems connected: a viewer, then the host at its check-in.
+    on.add("H3")
+    check("joining before its old page is seen closed: a viewer", reg.join("TABS", "H3", token, "browser", None, "tab-h").role, VIEWER)
+    on.discard("H2")
+    check("then the host at its check-in", reg.check_in("TABS", "H3", token, "browser", None, "tab-h").role, HOST)
+    # The host's tab closed for good: the viewer's tab is offered the role after the grace, like any viewer.
+    on.discard("H3")
+    clock.step(HOST_GRACE_S + 1)
+    checked = reg.check_in("TABS", "V1", token, "browser", None, "tab-v")
+    check("the host's tab closed: the viewer's tab offered the role, not given it", (checked.role, checked.shown.hosted), (VIEWER, False))
+    # A window of the browser coming to the session with the token (the creator back): the host.
+    on.add("N1")
+    check("a new window joining with the token hosts", reg.join("TABS", "N1", token, "browser", None, "tab-n").role, HOST)
+
+
+def colour_checks() -> None:
+    """The timers' colours and the theme, and the Time Left Warning's colour (Terry, 2026-11-01, items 4, 9 and 10)."""
+    both_white = {"elapsed": WHITE, "remaining": WHITE}
+    check("black for one turns a white other black, the theme light",
+          colours.choose(both_white, DARK, "elapsed", BLACK), ({"elapsed": BLACK, "remaining": BLACK}, LIGHT))
+    check("white for one turns a black other white, the theme dark",
+          colours.choose({"elapsed": BLACK, "remaining": BLACK}, LIGHT, "remaining", WHITE), (both_white, DARK))
+    check("black beside a colour: the colour kept, the theme light",
+          colours.choose({"elapsed": "yellow", "remaining": WHITE}, DARK, "remaining", BLACK),
+          ({"elapsed": "yellow", "remaining": BLACK}, LIGHT))
+    check("white beside a colour on white: the colour kept, the theme dark",
+          colours.choose({"elapsed": "yellow", "remaining": BLACK}, LIGHT, "remaining", WHITE),
+          ({"elapsed": "yellow", "remaining": WHITE}, DARK))
+    check("a colour other than black or white: the theme kept",
+          colours.choose({"elapsed": BLACK, "remaining": BLACK}, LIGHT, "elapsed", "green"),
+          ({"elapsed": "green", "remaining": BLACK}, LIGHT))
+    check("black chosen again where it is already: nothing changes",
+          colours.choose({"elapsed": BLACK, "remaining": WHITE}, DARK, "elapsed", BLACK),
+          ({"elapsed": BLACK, "remaining": WHITE}, DARK))
+    check("red is not a choice", "red" in colours.CLOCK_COLOURS, False)
+    for bad in [("elapsed", "red"), ("limit", WHITE)]:
+        try:
+            colours.choose(both_white, DARK, *bad)
+            check(f"choose {bad!r} refused", "taken", "refused")
+        except ValueError:
+            check(f"choose {bad!r} refused", "refused", "refused")
+    # The warning's colour: green beside white or black, else the complement of Remaining's.
+    check("the complement turns the hue half round", (colours.complement("#ff0000"), colours.complement("#ffffff")), ("#00ffff", "#ffffff"))
+    check("warning default beside white and black", (colours.warning_default(WHITE), colours.warning_default(BLACK)),
+          (colours.WARNING_GREEN, colours.WARNING_GREEN))
+    check("warning default beside orange: its complement", colours.warning_default("orange"),
+          colours.complement(colours.CLOCK_COLOURS["orange"]))
+    for timers in [both_white, {"elapsed": "yellow", "remaining": "orange"}, {"elapsed": "magenta", "remaining": "green"}]:
+        choices = colours.warning_choices(timers)
+        ruled_out = {colours.warning_default(timers["remaining"]), "#ff0000", "#ffffff", "#000000"} | {
+            colours.CLOCK_COLOURS[name] for name in timers.values()}
+        check(f"four warning choices, none ruled out, for {timers}", (len(choices), any(h in ruled_out for _, h in choices)), (4, False))
+    check("the warning's colour: auto is the default", colours.warning_colour(colours.AUTO, both_white), colours.WARNING_GREEN)
+    check("the warning's colour: a choice shown", colours.warning_colour("cyan", both_white), colours.WARNING_CANDIDATES["cyan"])
+    check("the warning's colour: a choice no longer shown is the default",
+          colours.warning_colour("yellow", {"elapsed": "yellow", "remaining": WHITE}), colours.WARNING_GREEN)
+
+    # The session: the host's alone; what the pages are given to draw.
+    reg = Registry(clock=Clock(), connected=lambda page: page in {"H", "V"})
+    reg.create("PAINT", "H")
+    reg.join("PAINT", "V", None)
+    reg.set_colour("PAINT", "H", "elapsed", BLACK)
+    look = reg.shown("PAINT").for_script()["look"]
+    check("set_colour: by the rule; the look as drawn", (look["theme"], look["elapsed"], look["remaining"], look["names"]),
+          (LIGHT, "#000000", "#000000", {"elapsed": BLACK, "remaining": BLACK}))
+    for who, timer, colour, refusal in [("V", "elapsed", WHITE, Refused), ("H", "elapsed", "red", ValueError), ("H", "limit", WHITE, ValueError)]:
+        try:
+            reg.set_colour("PAINT", who, timer, colour)
+            check(f"set_colour {who} {timer} {colour} refused", "set", "refused")
+        except refusal:
+            check(f"set_colour {who} {timer} {colour} refused", "refused", "refused")
+    reg.control("PAINT", "H", "warning", 1.25)
+    shown = reg.shown("PAINT")
+    check("the warning to a tenth, in seconds for the script", (shown.warning, shown.for_script()["warning"]), (1.3, 78))
+    reg.control("PAINT", "H", "warning", 0)
+    check("a warning of 0: none for the script", reg.shown("PAINT").for_script()["warning"], None)
+    reg.control("PAINT", "H", "warning", None)
+    check("the warning blanked", reg.shown("PAINT").warning, None)
+    buttons, chosen = reg.shown("PAINT").warning_buttons()
+    check("the warning's buttons: A first and chosen, then four", ([name for name, _ in buttons][0], len(buttons), chosen), (colours.AUTO, 5, colours.AUTO))
+    reg.set_warning_colour("PAINT", "H", "yellow")
+    check("a warning colour chosen", reg.shown("PAINT").for_script()["look"]["warning"], colours.WARNING_CANDIDATES["yellow"])
+    try:
+        reg.set_warning_colour("PAINT", "H", "red")
+        check("red refused for the warning", "set", "refused")
+    except ValueError:
+        check("red refused for the warning", "refused", "refused")
+    reg.set_colour("PAINT", "H", "remaining", "yellow")
+    shown = reg.shown("PAINT")
+    check("Remaining turned the warning's colour: the warning back to A, its complement",
+          (shown.warning_colour, shown.for_script()["look"]["warning"]), (colours.AUTO, colours.complement(colours.CLOCK_COLOURS["yellow"])))
+
+
+def remember_checks() -> None:
+    """A session's settings kept once it has gone, and in the store between runs (Terry, 2026-11-01, item 11)."""
+    store = Path(tempfile.mkdtemp()) / "remembered.json"
+    clock = Clock()
+    on = {"H"}
+    reg = Registry(clock=clock, connected=lambda page: page in on, store=store)
+    reg.create("KEEP", "H", None, MINUTES)
+    reg.control("KEEP", "H", "limit", 12.5)
+    reg.control("KEEP", "H", "warning", 2)
+    reg.set_size("KEEP", "H", "remaining", 250)
+    reg.set_colour("KEEP", "H", "remaining", "yellow")
+    reg.set_warning_colour("KEEP", "H", "cyan")
+    reg.control("KEEP", "H", "start")
+    clock.step(30)
+    # Everyone leaves; the session is removed EXPIRE_AFTER_S later (any create or join removes the expired).
+    reg.leave("KEEP", "H")
+    on.clear()
+    clock.step(EXPIRE_AFTER_S + 60)
+    reg.create("OTHER", "X")
+    check("the session gone", reg.exists("KEEP"), False)
+    on.add("H2")
+    _, _, notice = reg.create("KEEP", "H2", None, CLOCK)
+    shown = reg.shown("KEEP")
+    check("created again: its settings back (its way of showing the times too), its timer at zero",
+          (shown.limit, shown.warning, shown.sizes["remaining"], shown.colours["remaining"], shown.warning_colour, shown.host_mode,
+           shown.elapsed, shown.running, notice is not None),
+          (12.5, 2.0, 250, "yellow", "cyan", MINUTES, 0.0, False, True))
+    # A new run of the app: the settings read from the store.
+    again = Registry(clock=Clock(), store=store)
+    again.create("KEEP", "P")
+    check("a new run: the settings from the file", (again.shown("KEEP").limit, again.shown("KEEP").colours["remaining"]), (12.5, "yellow"))
+    _, _, notice = again.create("FRESH", "P2")
+    check("an ID never used: the defaults, no notice", (again.shown("FRESH").limit, notice), (None, None))
+    check("a random ID is never one used before", again.create(None, "P3")[0] not in ("KEEP", "FRESH"), True)
+    # A spoilt file: said so, and nothing remembered; spoilt values left at their defaults, a spoilt ID dropped.
+    store.write_text("{not json", encoding="utf-8")
+    said = io.StringIO()
+    with contextlib.redirect_stderr(said):
+        spoilt = Registry(clock=Clock(), store=store)
+    check("a spoilt file: a warning, nothing remembered", ("Warning:" in said.getvalue(), spoilt.remembered("KEEP")), (True, None))
+    store.write_text(json.dumps({"KEEP": {"limit": "lots", "sizes": {"elapsed": 9999}, "colours": {"remaining": "red"}, "theme": "pink"},
+                                 "bad id!": {}}), encoding="utf-8")
+    partial = Registry(clock=Clock(), store=store)
+    check("spoilt values at their defaults, a spoilt ID dropped", (partial.remembered("KEEP"), partial.remembered("bad id!")), (Settings(), None))
+
+
 def main() -> int:
     timer_checks()
     id_checks()
     session_checks()
     display_checks()
+    tab_checks()
+    colour_checks()
+    remember_checks()
     for failure in FAILURES:
         print("FAIL", failure)
     print(f"{COUNT - len(FAILURES)} of {COUNT} checks passed")

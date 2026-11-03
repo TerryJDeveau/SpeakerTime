@@ -18,9 +18,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -29,6 +31,7 @@ from playwright.sync_api import Page, sync_playwright
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+from speakertime.colours import CLOCK_COLOURS, WARNING_CANDIDATES, complement  # noqa: E402
 from speakertime.sessions import HOST_GRACE_S  # noqa: E402
 
 FAILURES: list[str] = []
@@ -39,9 +42,18 @@ _CLOCK_TEXTS = """() => {
   if (!host) return null;
   const r = host.shadowRoot;
   const t = (n) => r.querySelector('[data-v="' + n + '"]').textContent;
-  return { elapsed: t('elapsed'), remaining: t('remaining'), limit: t('limit'),
-           over: r.querySelector('[data-v="remaining"]').classList.contains('over') };
+  const value = r.querySelector('[data-v="remaining"]');
+  return { elapsed: t('elapsed'), remaining: t('remaining'), limit: t('limit'), over: value.classList.contains('over'),
+           blink: value.classList.contains('blink'), label: r.querySelector('[data-l="remaining"]').textContent };
 }"""
+
+# The clock's own rules (web._HUB_JS, texts) at a reading set by hand: [elapsed s, limit s or null, mode] each.
+_TEXTS_AT = """(cases) => cases.map(([elapsed, limit, mode]) => {
+  const h = Object.create(window.speakerTime);
+  h.base = { sid: 'x', elapsed, running: false, limit, version: 0, sizes: {}, at: performance.now() };
+  const t = h.texts(mode);
+  return [t.remaining, t.out, t.over];
+})"""
 
 _CLICK_POP = """() => [...document.querySelectorAll('*')].find(e => e.shadowRoot && e.shadowRoot.querySelector('.clock'))
   .shadowRoot.querySelector('.pop').click()"""
@@ -131,9 +143,11 @@ def free_port() -> int:
 
 def start_server() -> tuple[subprocess.Popen, str]:
     port = free_port()
+    # The checks' own file of remembered settings, never the app's (sessions.REMEMBER_FILE).
+    env = dict(os.environ, SPEAKERTIME_REMEMBER=str(Path(tempfile.mkdtemp()) / "remembered.json"))
     server = subprocess.Popen(
         [sys.executable, "-m", "streamlit", "run", "streamlit_app.py", "--server.port", str(port), "--server.headless", "true"],
-        cwd=ROOT, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        cwd=ROOT, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )
     url = f"http://localhost:{port}/"
     for _ in range(60):
@@ -218,10 +232,18 @@ def run(url: str, launch: dict, shots: Path | None) -> None:
         a.wait_for_timeout(3300)
         texts = [clock(a), clock(b), clock(c)]
         ok("3 s in: all agree", texts[0]["elapsed"] == "0:03" and texts[0] == texts[1] == texts[2], texts)
+        ok("3 s in: Time Remaining, plain", (texts[0]["label"], texts[0]["over"], texts[0]["blink"]) == ("Time Remaining", False, False))
         a.wait_for_timeout(4000)
         texts = [clock(a), clock(b), clock(c)]
-        ok("past the limit: negative and red everywhere",
-           all(t["remaining"].startswith("−") and t["over"] for t in texts) and texts[0] == texts[1] == texts[2], texts)
+        ok("past the limit: negative, red and blinking everywhere, the label Overtime",
+           all(t["remaining"].startswith("−") and t["over"] and t["blink"] and t["label"] == "Overtime" for t in texts)
+           and texts[0] == texts[1] == texts[2], texts)
+        # Zero and below by the figures as shown (Terry, 2026-11-01: red and blinking at zero, Overtime only below it).
+        rules = a.evaluate(_TEXTS_AT, [[5.5, 6, "clock"], [6.2, 6, "clock"], [7, 6, "clock"], [5, 6, "minutes"],
+                                       [6, 6, "minutes"], [11.9, 6, "minutes"], [12, 6, "minutes"], [100, None, "clock"]])
+        ok("out at zero, over below it, in both ways; never out with no limit", rules == [
+            ["0:01", False, False], ["0:00", True, False], ["−0:01", True, True], ["0.1", False, False],
+            ["0.0", True, False], ["0.0", True, False], ["−0.1", True, True], ["0:00", False, False]], rules)
         shot(a, "3-host.png")
         shot(b, "4-viewer.png")
         limit_box(a).fill("2.25")
@@ -324,6 +346,7 @@ def run(url: str, launch: dict, shots: Path | None) -> None:
             ok("the kick brings more, the clock kept", kicked["checkIns"] > alone["checkIns"] + 3 and kicked["clockKept"], kicked)
 
             sizes_and_modes(a, b, c, pip)
+            colours_and_warning(a, c)
         windows_of_one_browser(browser, errors)
 
         ok("no script errors on any page", not errors, errors)
@@ -351,6 +374,8 @@ def sizes_and_modes(a: Page, b: Page, c: Page, pip: Page) -> None:
     # 12. Sizes: the host's alone; Elapsed set to 50 % halves it on a viewer's panel and in the pop-out, Remaining kept.
     ok("the host has a slider beside each timer", on_clock(c, _SLIDERS) == ["elapsed", "remaining"], on_clock(c, _SLIDERS))
     ok("a viewer has none", on_clock(a, _SLIDERS) == [], on_clock(a, _SLIDERS))
+    maxima = on_clock(c, f"() => [...{_CLOCK_ROOT}.querySelectorAll('input.size')].map(s => s.max)")
+    ok("the sliders go to four times (Terry, 2026-11-01: twice the 200 %)", maxima == ["400", "400"], maxima)
     before, pip_before = on_clock(a, _PANEL), pip.evaluate(_POPOUT)
     on_clock(c, _SLIDE, ["elapsed", 50])
     c.wait_for_timeout(2500)
@@ -407,6 +432,100 @@ def sizes_and_modes(a: Page, b: Page, c: Page, pip: Page) -> None:
     ok("then keeps its own", (viewer_pip.evaluate(_POPOUT)["mode"], mode_of(a)) == ("minutes", "clock"))
 
 
+def rgb(hex_colour: str) -> str:
+    """A "#rrggbb" colour as getComputedStyle gives it."""
+    return "rgb({}, {}, {})".format(*(int(hex_colour[i:i + 2], 16) for i in (1, 3, 5)))
+
+
+# The panel's colours as drawn: its background, its label's text, and each figure's colour, with Remaining's classes.
+_PAINT = f"""() => {{
+  const r = {_CLOCK_ROOT};
+  const css = (sel, prop) => getComputedStyle(r.querySelector(sel))[prop];
+  const warning = r.querySelector('[data-w]');
+  return {{ panel: css('.clock', 'backgroundColor'), label: css('[data-l="elapsed"]', 'color'),
+           elapsed: css('[data-v="elapsed"]', 'color'), remaining: css('[data-v="remaining"]', 'color'),
+           warn: r.querySelector('[data-v="remaining"]').classList.contains('warn'),
+           warningShown: !warning.hidden, warningText: r.querySelector('[data-v="warning"]').textContent,
+           warningColour: css('[data-v="warning"]', 'color'),
+           swatches: [...r.querySelectorAll('.swatches')].filter(s => !s.hidden).map(s => s.dataset.t) }};
+}}"""
+_SWATCH = f"([timer, colour]) => {_CLOCK_ROOT}.querySelector('.swatches[data-t=\"' + timer + '\"] button[data-c=\"' + colour + '\"]').click()"
+_PICKS = """() => [...[...document.querySelectorAll('*')].find(e => e.shadowRoot && e.shadowRoot.querySelector('.picks'))
+  .shadowRoot.querySelectorAll('.picks button')].map(b => [b.dataset.c, b.classList.contains('on')])"""
+_PICK = """(name) => [...document.querySelectorAll('*')].find(e => e.shadowRoot && e.shadowRoot.querySelector('.picks'))
+  .shadowRoot.querySelector('.picks button[data-c="' + name + '"]').click()"""
+
+
+def colours_and_warning(a: Page, c: Page) -> None:
+    """16-17. The host's colour buttons and Terry's rule for black and white; the Time Left Warning and its colour (2026-11-01).
+
+    On entry C hosts TALK1 (Time Limit 2.3 minutes, stopped part way), A views it.
+    """
+    ok("colour buttons beside the host's sliders, none for a viewer",
+       (on_clock(c, _PAINT)["swatches"], on_clock(a, _PAINT)["swatches"]) == (["elapsed", "remaining"], []))
+    on_clock(c, _SWATCH, ["elapsed", "black"])
+    c.wait_for_timeout(2500)
+    seen = on_clock(a, _PAINT)
+    ok("black for Elapsed: both timers black, the panel white, its text black, on a viewer's panel",
+       (seen["panel"], seen["label"], seen["elapsed"], seen["remaining"]) == (rgb("#ffffff"), rgb("#000000"), rgb("#000000"), rgb("#000000")),
+       seen)
+    on_clock(c, _SWATCH, ["remaining", "orange"])
+    c.wait_for_timeout(2500)
+    seen = on_clock(a, _PAINT)
+    ok("orange for Remaining: Elapsed stays black, the panel white", (seen["panel"], seen["elapsed"], seen["remaining"])
+       == (rgb("#ffffff"), rgb("#000000"), rgb(CLOCK_COLOURS["orange"])), seen)
+    on_clock(c, _SWATCH, ["elapsed", "white"])
+    c.wait_for_timeout(2500)
+    seen = on_clock(a, _PAINT)
+    ok("white for Elapsed: the panel black, its text white; Remaining stays orange",
+       (seen["panel"], seen["label"], seen["elapsed"], seen["remaining"])
+       == (rgb("#000000"), rgb("#ffffff"), rgb("#ffffff"), rgb(CLOCK_COLOURS["orange"])), seen)
+
+    # 17. The warning: none shown while blank; set to the whole limit, Remaining is within it at once.
+    ok("no warning set: none shown", on_clock(a, _PAINT)["warningShown"] is False)
+    box = c.get_by_role("spinbutton", name="Time Left Warning (minutes)")
+    box.fill("2.3")
+    box.press("Enter")
+    c.wait_for_timeout(2500)
+    seen = on_clock(a, _PAINT)
+    ok("a warning set: shown beside the limit, in the colour opposite orange; Remaining in it",
+       (seen["warningShown"], seen["warningText"], seen["warningColour"], seen["warn"], seen["remaining"])
+       == (True, "2:18", rgb(complement(CLOCK_COLOURS["orange"])), True, rgb(complement(CLOCK_COLOURS["orange"]))), seen)
+    picks = settled(lambda: c.evaluate(_PICKS)[0], ["auto", True])
+    ok("the warning's colour buttons: A chosen, then four", picks == ["auto", True] and len(c.evaluate(_PICKS)) == 5, c.evaluate(_PICKS))
+    c.evaluate(_PICK, "cyan")
+    c.wait_for_timeout(2500)
+    seen = on_clock(a, _PAINT)
+    ok("cyan chosen: the warning and Remaining in cyan", (seen["warningColour"], seen["remaining"])
+       == (rgb(WARNING_CANDIDATES["cyan"]),) * 2, seen)
+    on_clock(c, _SWATCH, ["remaining", "white"])
+    c.wait_for_timeout(2500)
+    seen = on_clock(a, _PAINT)
+    ok("Remaining white again: cyan still one of the choices, so the warning stays cyan",
+       seen["warningColour"] == rgb(WARNING_CANDIDATES["cyan"]), seen)
+    box.fill("")
+    box.press("Enter")
+    c.wait_for_timeout(2500)
+    ok("the warning blanked: none shown, Remaining in its own colour",
+       (on_clock(a, _PAINT)["warningShown"], on_clock(a, _PAINT)["warn"]) == (False, False), on_clock(a, _PAINT))
+    # The host's page has had a dozen whole runs by now: still one timer drawing its panel (10 a second).
+    on_clock(c, "() => true")
+    draws = c.evaluate(_PANEL_DRAWS)
+    ok("one timer draws the panel, however many runs (about 10 draws a second)", 8 <= draws <= 12, draws)
+
+
+# The panel's draws in a second (the pop-out's, drawn into its document, not counted).
+_PANEL_DRAWS = """async () => {
+  const h = window.speakerTime;
+  let n = 0;
+  const real = h.draw.bind(h);
+  h.draw = (root, mode) => { if (!root.body) n++; real(root, mode); };
+  await new Promise((r) => setTimeout(r, 2000));
+  h.draw = real;
+  return n / 2;
+}"""
+
+
 def windows_of_one_browser(browser, errors: list[str]) -> None:
     """14. Several sessions in one browser (its windows share the cookies): each window goes back to its own (2026-11-01)."""
     profile = browser.new_context(viewport={"width": 700, "height": 800})
@@ -454,12 +573,34 @@ def windows_of_one_browser(browser, errors: list[str]) -> None:
     ok("Rejoin: the host of BRAVO", where(w5) == "Session ID: BRAVO You are the host.", where(w5))
     profile.close()
 
+    # 15. A host and a viewer of one session in two tabs of one browser (Terry, 2026-11-01, item 3):
+    # the host's tab reloaded stays the host, though the viewer's tab holds the same cookies.
+    profile = browser.new_context(viewport={"width": 700, "height": 800})
+    host = window()
+    id_box(host).fill("DELTA")
+    button(host, "Create New Session").click()
+    host.get_by_text("You are the host.").wait_for()
+    viewer = window()
+    id_box(viewer).fill("DELTA")
+    button(viewer, "Connect to Session").click()
+    viewer.get_by_text("You are viewing it.").wait_for(timeout=5000)
+    for round_ in (1, 2):
+        host.reload()
+        host.get_by_text("You are the host.").wait_for(timeout=8000)
+        host.wait_for_timeout(2500)
+        ok(f"two tabs, the host's reloaded ({round_}): host and viewer as they were",
+           (where(host), where(viewer)) == ("Session ID: DELTA You are the host.", "Session ID: DELTA You are viewing it."),
+           [where(host), where(viewer)])
+    profile.close()
+
 
 profile_url = ""
 """The page's address, for windows_of_one_browser (set by run)."""
 
 
 def main() -> int:
+    # The details print the figures' minus sign (U+2212), which Windows' console code page (cp1252) cannot encode.
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--url", help="test this running page instead of starting one")
     parser.add_argument("--chrome", action="store_true", help="use the installed Google Chrome")

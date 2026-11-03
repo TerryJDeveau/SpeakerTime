@@ -2,9 +2,11 @@
 
 One process serves every visitor (Streamlit Community Cloud runs one per
 app), each page in a thread of its own, so a table in this module behind one
-lock is what the host's page and every viewer's page see. Nothing is written
-to disk: a restart of the app (a reboot, a push, a sleep after 12 hours
-without visitors) ends every session.
+lock is what the host's page and every viewer's page see. The sessions
+themselves are not written to disk: a restart of the app (a reboot, a push,
+a sleep after 12 hours without visitors) ends every session. Their settings
+are (``Settings``, ``REMEMBER_FILE``), so a session started again under its
+ID starts from them (Terry, 2026-11-01, item 11).
 
 Nothing here imports Streamlit. A page is named by an id the caller gives
 (the page's Streamlit session id), and the caller passes in a way to ask
@@ -24,18 +26,38 @@ The rules (Terry, 2026-10-30):
   (``set_size``). Each panel chooses its own way of showing the times; the
   host's is the default of a page as it opens, and of every page again each
   time a host connects (``host_mode``, ``host_epoch``).
+- (Terry, 2026-11-01, item 3) A host and a viewer may be two tabs of one
+  browser. Every tab of a browser holds the host's token (the cookie is the
+  browser's), so a page already showing the session takes the host's role
+  by the token only if it is the host's own tab (a reload of it: ``host_tab``);
+  another tab is a viewer like any other, offered the role after the grace.
+  Measured 2026-11-03: before this, the host's tab reloaded while a viewer's
+  tab of the same browser was open, and the viewer's tab became the host.
+- (Terry, 2026-11-01, items 4, 9 and 10) The host sets each timer's colour
+  and the Time Left Warning, with its colour, for everyone (``set_colour``,
+  ``control("warning")``, ``set_warning_colour``; the rules in ``colours``).
+- (Terry, 2026-11-01, item 11) Once everyone has left a session and it has
+  gone, its latest settings are remembered: Create New Session under its ID
+  starts from them (``Settings``).
 """
 
 from __future__ import annotations
 
+import json
+import os
 import secrets
+import sys
 import threading
 import time
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
+from pathlib import Path
 
 from . import ids
-from .timer import CLOCK, MODES, Timer, limit_seconds
+from .colours import (
+    AUTO, CLOCK_COLOURS, DARK, DEFAULT_COLOUR, LIGHT, WARNING_CANDIDATES, choose, warning_choices, warning_colour,
+)
+from .timer import CLOCK, MODES, Timer, limit_minutes, limit_seconds
 
 HOST_GRACE_S = 10.0
 """A host's page that has closed still counts as the host for this long after it last checked in.
@@ -65,12 +87,71 @@ VIEWER = "viewer"
 SIZED = ("elapsed", "remaining")
 """The timers whose size the host sets (the Time Limit's figures keep theirs)."""
 
-SIZE_MIN, SIZE_MAX, SIZE_STEP, SIZE_DEFAULT = 25, 200, 5, 100
-"""A timer's size, in percent of the figures' own size on each panel or pop-out (which follows its width): a quarter to double."""
+SIZE_MIN, SIZE_MAX, SIZE_STEP, SIZE_DEFAULT = 25, 400, 5, 100
+"""A timer's size, in percent of the figures' own size on each panel or pop-out (which follows its width): a quarter to four times.
+
+The most was 200 until Terry asked for twice it (2026-11-01). The figures
+still never grow wider than their column (``web``), so where the width
+already limits them a larger setting shows no larger: in a wide, low pop-out
+the height limits them first, and there they grow up to four times.
+"""
+
+
+REMEMBER_KEPT = 500
+"""The most sessions whose settings are remembered, the most recently changed."""
+
+_REPLACE_PAUSES = (0.05, 0.1, 0.2, None)
+"""Pauses (seconds) between tries of putting the written file in place; None: the last try."""
+
+REMEMBER_FILE = Path(os.environ.get("SPEAKERTIME_REMEMBER") or Path(__file__).resolve().parents[1] / "remembered_sessions.json")
+"""Where the settings are kept between runs of the app: beside the program (left out of git), or the file named by SPEAKERTIME_REMEMBER (the checks use their own)."""
 
 
 class Refused(Exception):
     """An action not done, with the reason to show the person (the message is shown as it is)."""
+
+
+@dataclass
+class Settings:
+    """What the host has set in a session: what a session started again under its ID starts from (item 11)."""
+
+    limit: float | None = None
+    """The Time Limit, minutes to a tenth."""
+    warning: float | None = None
+    """The Time Left Warning, minutes to a tenth; None (blank), 0 or less mean none."""
+    warning_colour: str = AUTO
+    """The warning's colour: AUTO (Terry's rule) or a name of ``colours.WARNING_CANDIDATES``."""
+    sizes: dict[str, int] = field(default_factory=lambda: dict.fromkeys(SIZED, SIZE_DEFAULT))
+    """Each timer's size in percent (SIZED)."""
+    colours: dict[str, str] = field(default_factory=lambda: dict.fromkeys(SIZED, DEFAULT_COLOUR))
+    """Each timer's figures' colour, a name of ``colours.CLOCK_COLOURS``."""
+    theme: str = DARK
+    """The panel's theme, as the last choice of black or white left it."""
+    host_mode: str = CLOCK
+    """The host's way of showing the times."""
+
+    @classmethod
+    def read(cls, kept: object) -> Settings:
+        """Settings from what was kept (the file), each one checked: anything spoilt or unknown is left at its default."""
+        settings = cls()
+        if not isinstance(kept, dict):
+            return settings
+        settings.limit = limit_minutes(kept.get("limit")) if isinstance(kept.get("limit"), (int, float)) else None
+        settings.warning = limit_minutes(kept.get("warning")) if isinstance(kept.get("warning"), (int, float)) else None
+        if kept.get("warning_colour") == AUTO or kept.get("warning_colour") in WARNING_CANDIDATES:
+            settings.warning_colour = kept["warning_colour"]
+        for timer in SIZED:
+            size = (kept.get("sizes") or {}).get(timer) if isinstance(kept.get("sizes"), dict) else None
+            if isinstance(size, int) and SIZE_MIN <= size <= SIZE_MAX:
+                settings.sizes[timer] = size
+            colour = (kept.get("colours") or {}).get(timer) if isinstance(kept.get("colours"), dict) else None
+            if colour in CLOCK_COLOURS:
+                settings.colours[timer] = colour
+        if kept.get("theme") in (DARK, LIGHT):
+            settings.theme = kept["theme"]
+        if kept.get("host_mode") in MODES:
+            settings.host_mode = kept["host_mode"]
+        return settings
 
 
 @dataclass
@@ -81,6 +162,8 @@ class Session:
     timer: Timer = field(default_factory=Timer)
     host: str | None = None
     """The hosting page's id; None once the host has left by Leave Session."""
+    host_tab: str | None = None
+    """The hosting page's tab (a random id the tab keeps through its reloads, ``web``); None where the page could not say."""
     host_seen: float = 0.0
     """When the host's page last checked in (the monotonic clock)."""
     viewers: dict[str, float] = field(default_factory=dict)
@@ -97,6 +180,29 @@ class Session:
     """Raised each time a page becomes the host: every other page then takes ``host_mode`` again."""
     browsers: dict[str, str] = field(default_factory=dict)
     """Each page's browser (a random id its cookie keeps), so that a browser's own pages can be told (``Registry.candidates``)."""
+    colours: dict[str, str] = field(default_factory=lambda: dict.fromkeys(SIZED, DEFAULT_COLOUR))
+    """Each timer's figures' colour (a name of ``colours.CLOCK_COLOURS``), as the host set it."""
+    theme: str = DARK
+    """The panel's theme (``colours.DARK`` or ``LIGHT``), as the host's last choice of black or white left it."""
+    warning: float | None = None
+    """The Time Left Warning in minutes, to a tenth; None (blank), 0 or less mean none."""
+    warning_colour: str = AUTO
+    """The warning's colour: AUTO (Terry's rule) or a name of ``colours.WARNING_CANDIDATES``."""
+
+    def settings(self) -> Settings:
+        """What the host has set, as remembered (``Settings``)."""
+        return Settings(limit=self.timer.limit, warning=self.warning, warning_colour=self.warning_colour,
+                        sizes=dict(self.sizes), colours=dict(self.colours), theme=self.theme, host_mode=self.host_mode)
+
+    def apply(self, settings: Settings) -> None:
+        """Start from remembered settings (a session started again under its ID)."""
+        self.timer.limit = settings.limit
+        self.warning = settings.warning
+        self.warning_colour = settings.warning_colour
+        self.sizes = dict(settings.sizes)
+        self.colours = dict(settings.colours)
+        self.theme = settings.theme
+        self.host_mode = settings.host_mode
 
 
 @dataclass(frozen=True)
@@ -117,16 +223,39 @@ class Shown:
     """The host's way of showing the times."""
     host_epoch: int
     """How many times a page has become the host."""
+    colours: dict[str, str]
+    """Each timer's figures' colour, a name of ``colours.CLOCK_COLOURS``."""
+    theme: str
+    """The panel's theme."""
+    warning: float | None
+    """The Time Left Warning in minutes; None for none."""
+    warning_colour: str
+    """The warning's colour as chosen: AUTO or a name of ``colours.WARNING_CANDIDATES``."""
 
     def for_script(self) -> dict[str, object]:
-        """What the page's script needs to run the clock (``web._HUB_JS``): the limit in whole seconds, None for none."""
+        """What the page's script needs to run the clock (``web._HUB_JS``): the limit and the warning in whole seconds (None for none), and the colours as drawn."""
         return {
             "elapsed": self.elapsed,
             "running": self.running,
             "limit": limit_seconds(self.limit),
+            "warning": limit_seconds(self.warning),
             "version": self.version,
             "sizes": dict(self.sizes),
+            "look": {
+                "theme": self.theme,
+                "names": dict(self.colours),
+                "elapsed": CLOCK_COLOURS[self.colours["elapsed"]],
+                "remaining": CLOCK_COLOURS[self.colours["remaining"]],
+                "warning": warning_colour(self.warning_colour, self.colours),
+            },
         }
+
+    def warning_buttons(self) -> tuple[list[tuple[str, str]], str]:
+        """The warning's colour buttons for the host: (name, hex) for AUTO and the four others, and the one chosen (AUTO where the choice is not among them)."""
+        choices = warning_choices(self.colours)
+        buttons = [(AUTO, warning_colour(AUTO, self.colours))] + choices
+        chosen = self.warning_colour if any(name == self.warning_colour for name, _ in choices) else AUTO
+        return buttons, chosen
 
 
 @dataclass(frozen=True)
@@ -151,19 +280,72 @@ class Registry:
         self,
         clock: Callable[[], float] = time.monotonic,
         connected: Callable[[str], bool | None] | None = None,
+        store: Path | None = None,
     ) -> None:
         """``connected(page)`` says whether a page's connection is open: True, False, or None where it cannot tell.
 
         Where it cannot tell, a page counts only while it checks in (HOST_GRACE_S).
+        ``store`` is the file the sessions' settings are kept in between runs
+        (None: kept for this run only).
         """
         self._lock = threading.Lock()
         self._sessions: dict[str, Session] = {}
         self._clock = clock
         self._connected = connected or (lambda _page: None)
+        self._store = store
+        self._remembered: dict[str, Settings] = self._load()
 
     def set_connected(self, connected: Callable[[str], bool | None]) -> None:
         """Give the way to ask whether a page is connected: the page has it only once Streamlit runs."""
         self._connected = connected
+
+    # -- the settings remembered (item 11) ------------------------------------
+
+    def _load(self) -> dict[str, Settings]:
+        """The settings kept in the store, each checked (``Settings.read``); none if there is no store or no file yet."""
+        if self._store is None or not self._store.is_file():
+            return {}
+        try:
+            kept = json.loads(self._store.read_text(encoding="utf-8"))
+            if not isinstance(kept, dict):
+                raise ValueError("not a table of sessions")
+        except (OSError, ValueError) as problem:
+            print(f"Warning: the remembered settings in {self._store} could not be read ({problem}); starting without them.",
+                  file=sys.stderr)
+            return {}
+        return {sid: Settings.read(settings) for sid, settings in kept.items()
+                if isinstance(sid, str) and ids.normalized(sid) == sid and not ids.problem(sid)}
+
+    def _remember(self, session: Session) -> None:
+        """Keep ``session``'s settings as its latest (and write them to the store): called under the lock at every change of them."""
+        self._remembered.pop(session.sid, None)
+        self._remembered[session.sid] = session.settings()
+        while len(self._remembered) > REMEMBER_KEPT:
+            del self._remembered[next(iter(self._remembered))]
+        if self._store is None:
+            return
+        try:
+            temporary = self._store.with_name(self._store.name + ".tmp")
+            temporary.write_text(json.dumps({sid: asdict(s) for sid, s in self._remembered.items()}, indent=1), encoding="utf-8")
+            # On Windows a file written a moment before can refuse the replace for a few
+            # milliseconds (its virus scan or indexer: measured with ratesplot, 2026-10-28,
+            # and here, 2026-11-03): tried again after short pauses before giving up.
+            for pause in _REPLACE_PAUSES:
+                try:
+                    os.replace(temporary, self._store)
+                    break
+                except PermissionError:
+                    if pause is None:
+                        raise
+                    time.sleep(pause)
+        except OSError as problem:
+            print(f"Warning: the remembered settings could not be written to {self._store} ({problem}); "
+                  "they are kept until the app restarts.", file=sys.stderr)
+
+    def remembered(self, sid: str) -> Settings | None:
+        """The latest settings of session ``sid`` (running or gone); None for an ID never used."""
+        with self._lock:
+            return self._remembered.get(sid)
 
     # -- the rules about pages -------------------------------------------
 
@@ -201,14 +383,16 @@ class Registry:
         connected = self._connected(page)
         return connected if connected is not None else now - seen < HOST_GRACE_S
 
-    def _make_host(self, session: Session, page: str, now: float, token: str | None = None, mode: str | None = None) -> None:
-        """``page`` hosts ``session`` from now; a new token unless the page brought the session's own.
+    def _make_host(self, session: Session, page: str, now: float, token: str | None = None, mode: str | None = None,
+                   tab: str | None = None) -> None:
+        """``page`` (of tab ``tab``) hosts ``session`` from now; a new token unless the page brought the session's own.
 
         The page's way of showing the times (``mode``, None for a page that has
         none yet) becomes the host's, and every other page takes it at its next
         check-in (``host_epoch``): Terry, 2026-11-01, "when the host connects".
         """
         session.host = page
+        session.host_tab = tab
         session.host_seen = now
         session.token = token or _new_token()
         session.viewers.pop(page, None)
@@ -216,6 +400,7 @@ class Registry:
             session.host_mode = mode
         session.host_epoch += 1
         session.version += 1
+        self._remember(session)
 
     def _expire(self, now: float) -> None:
         """Remove the sessions nobody has had open for EXPIRE_AFTER_S, and the viewers' pages long gone."""
@@ -239,6 +424,10 @@ class Registry:
             sizes=dict(session.sizes),
             host_mode=session.host_mode,
             host_epoch=session.host_epoch,
+            colours=dict(session.colours),
+            theme=session.theme,
+            warning=session.warning,
+            warning_colour=session.warning_colour,
         )
 
     # -- what pages do ------------------------------------------------------
@@ -247,31 +436,41 @@ class Registry:
         with self._lock:
             return sid in self._sessions
 
-    def create(self, sid: str | None, page: str, browser: str | None = None, mode: str | None = None) -> tuple[str, str, str | None]:
+    def create(self, sid: str | None, page: str, browser: str | None = None, mode: str | None = None,
+               tab: str | None = None) -> tuple[str, str, str | None]:
         """Create New Session: ``sid``, or a random ID for None. Returns the ID, the host's token and a notice (None for none).
 
         Refused when another page hosts a session of that ID. A session of the
         ID with no host connected is taken over as it is, its timers running
         on, so its viewers see nothing change (Terry's rule that a session
-        survives its host's leaving); Reset starts it again.
+        survives its host's leaving); Reset starts it again. A session of an
+        ID used before, gone since, starts from its latest settings (item 11),
+        its way of showing the times included; a random ID is never one used
+        before.
         """
         with self._lock:
             now = self._clock()
             self._expire(now)
             if sid is None:
-                sid = ids.random_id(lambda candidate: candidate in self._sessions)
+                sid = ids.random_id(lambda candidate: candidate in self._sessions or candidate in self._remembered)
             session = self._sessions.get(sid)
             if session is None:
                 session = Session(sid=sid, token=_new_token(), attended=now)
-                self._make_host(session, page, now, session.token, mode)
+                before = self._remembered.get(sid)
+                if before is not None:
+                    session.apply(before)
+                self._make_host(session, page, now, session.token, None if before is not None else mode, tab)
                 self._sessions[sid] = session
                 self._note_browser(session, page, browser)
-                return sid, session.token, None
+                return sid, session.token, None if before is None else (
+                    f"Session {sid} starts from its settings of last time: its Time Limit, Time Left Warning, "
+                    "sizes, colours, and way of showing the times."
+                )
             if session.host == page:
                 return sid, session.token, None
             if self._host_live(session, now):
                 raise Refused(f"Session {sid} already has a host. Please choose another session ID.")
-            self._make_host(session, page, now, mode=mode)
+            self._make_host(session, page, now, mode=mode, tab=tab)
             self._note_browser(session, page, browser)
             session.attended = now
             return sid, session.token, (
@@ -285,22 +484,28 @@ class Registry:
             session.browsers[page] = browser
 
     def _attend(self, session: Session, page: str, token: str | None, now: float,
-                browser: str | None, mode: str | None) -> Checked:
-        """``page`` has ``session`` open: its role, the host's if it brings the token and the host's page has closed."""
+                browser: str | None, mode: str | None, tab: str | None, joining: bool) -> Checked:
+        """``page`` has ``session`` open: its role, the host's if it brings the token and the host's page has closed.
+
+        A page already showing the session (``joining`` False: a check-in) takes
+        the role by the token only from its own tab's earlier page, or where
+        the host's tab is not known (module docstring: two tabs of one browser).
+        """
         session.attended = now
         self._note_browser(session, page, browser)
         if session.host == page:
             session.host_seen = now
             return Checked(HOST, self._shown(session, now), None)
-        if token is not None and token == session.token and self._host_gone(session, now):
-            self._make_host(session, page, now, token, mode)
+        own_tab = joining or session.host_tab is None or tab == session.host_tab
+        if token is not None and token == session.token and own_tab and self._host_gone(session, now):
+            self._make_host(session, page, now, token, mode, tab)
             return Checked(HOST, self._shown(session, now), token)
         session.viewers[page] = now
         return Checked(VIEWER, self._shown(session, now), None)
 
     def join(self, sid: str, page: str, token: str | None, browser: str | None = None,
-             mode: str | None = None) -> Checked | None:
-        """Connect to Session: None if there is no session ``sid`` (the page waits); otherwise this page's role.
+             mode: str | None = None, tab: str | None = None) -> Checked | None:
+        """Connect to Session (or a window going back to one): None if there is no session ``sid`` (the page waits); otherwise this page's role.
 
         A page bringing the session's token hosts it, unless another page that
         is still connected hosts it; any other page views it.
@@ -309,20 +514,21 @@ class Registry:
             now = self._clock()
             self._expire(now)
             session = self._sessions.get(sid)
-            return None if session is None else self._attend(session, page, token, now, browser, mode)
+            return None if session is None else self._attend(session, page, token, now, browser, mode, tab, True)
 
     def check_in(self, sid: str, page: str, token: str | None, browser: str | None = None,
-                 mode: str | None = None) -> Checked | None:
+                 mode: str | None = None, tab: str | None = None) -> Checked | None:
         """A page showing session ``sid`` checks in (once a second): its role now, and what it shows. None if the session is gone.
 
-        A viewer bringing the session's token becomes its host here once the
-        host's page has closed, as ``join`` would have made it: so the token's
-        holder is never left waiting behind its own old page.
+        A viewer of the host's own tab (the host's page reloaded) bringing the
+        session's token becomes its host here once the host's old page has
+        closed, as ``join`` would have made it: so the token's holder is never
+        left waiting behind its own old page. A viewer of another tab is not.
         """
         with self._lock:
             now = self._clock()
             session = self._sessions.get(sid)
-            return None if session is None else self._attend(session, page, token, now, browser, mode)
+            return None if session is None else self._attend(session, page, token, now, browser, mode, tab, False)
 
     def candidates(self, sids: list[str], page: str, browser: str | None,
                    tokens: dict[str, str]) -> list[tuple[str, bool]]:
@@ -353,7 +559,7 @@ class Registry:
                     found.append((sid, token is not None and token == session.token and self._host_gone(session, now)))
             return found
 
-    def assume_host(self, sid: str, page: str, mode: str | None = None) -> str:
+    def assume_host(self, sid: str, page: str, mode: str | None = None, tab: str | None = None) -> str:
         """Yes to "Assume Host Role?": this page hosts ``sid`` from now, with a new token, which is returned.
 
         Refused if the session has gone, or if a host has connected meanwhile
@@ -368,7 +574,7 @@ class Registry:
                 return session.token
             if self._host_live(session, now):
                 raise Refused(f"Someone else is now the host of session {sid}.")
-            self._make_host(session, page, now, mode=mode)
+            self._make_host(session, page, now, mode=mode, tab=tab)
             session.attended = now
             return session.token
 
@@ -385,7 +591,11 @@ class Registry:
                 session.version += 1
 
     def control(self, sid: str, page: str, action: str, value: float | None = None) -> None:
-        """The host's buttons and Time Limit: "start", "stop", "reset" or "limit" (with ``value``). Refused for a page that does not host ``sid``."""
+        """The host's buttons, Time Limit and Time Left Warning: "start", "stop", "reset", "limit" or "warning" (the last two with ``value``).
+
+        Refused for a page that does not host ``sid``. The warning is read as
+        the limit is, minutes to a tenth (``timer.limit_minutes``).
+        """
         with self._lock:
             now = self._clock()
             session = self._host_session(sid, page)
@@ -398,12 +608,18 @@ class Registry:
                 changed = timer.reset(now)
             elif action == "limit":
                 changed = timer.set_limit(value)
+            elif action == "warning":
+                warning = limit_minutes(value)
+                changed = warning != session.warning
+                session.warning = warning
             else:
                 raise ValueError(f"no such action: {action!r}")
             session.host_seen = now
             session.attended = now
             if changed:
                 session.version += 1
+                if action in ("limit", "warning"):
+                    self._remember(session)
 
     def set_size(self, sid: str, page: str, timer: str, percent: object) -> None:
         """The host's slider beside a timer: its size for every page, in percent. Refused for a page that does not host ``sid``.
@@ -425,6 +641,43 @@ class Registry:
             if session.sizes[timer] != size:
                 session.sizes[timer] = size
                 session.version += 1
+                self._remember(session)
+
+    def set_colour(self, sid: str, page: str, timer: str, colour: object) -> None:
+        """A colour button beside the host's slider: ``timer``'s figures' colour for every page, by Terry's rule for black and white (``colours.choose``).
+
+        Refused for a page that does not host ``sid``; ValueError for a timer
+        or colour not known. A warning colour that the change rules out (now
+        a timer's colour, or the default) goes back to AUTO.
+        """
+        if timer not in SIZED or not isinstance(colour, str):
+            raise ValueError(f"not a timer's colour: {timer!r}, {colour!r}")
+        with self._lock:
+            session = self._host_session(sid, page)
+            after, theme = choose(session.colours, session.theme, timer, colour)
+            if (after, theme) == (session.colours, session.theme):
+                return
+            session.colours, session.theme = after, theme
+            if session.warning_colour not in {name for name, _ in warning_choices(after)}:
+                session.warning_colour = AUTO
+            session.version += 1
+            self._remember(session)
+
+    def set_warning_colour(self, sid: str, page: str, choice: object) -> None:
+        """A colour button beside the Time Left Warning: AUTO (Terry's rule) or one of the four others shown (``colours.warning_choices``).
+
+        Refused for a page that does not host ``sid``; ValueError for a choice
+        that is not one of them now.
+        """
+        with self._lock:
+            session = self._host_session(sid, page)
+            shown = {AUTO} | {name for name, _ in warning_choices(session.colours)}
+            if choice not in shown or choice not in WARNING_CANDIDATES and choice != AUTO:
+                raise ValueError(f"not a warning colour now: {choice!r}")
+            if session.warning_colour != choice:
+                session.warning_colour = choice
+                session.version += 1
+                self._remember(session)
 
     def set_host_mode(self, sid: str, page: str, mode: str) -> None:
         """The host's page has changed its way of showing the times: the default for pages that open from now on.
@@ -435,8 +688,9 @@ class Registry:
         """
         with self._lock:
             session = self._sessions.get(sid)
-            if session is not None and session.host == page and mode in MODES:
+            if session is not None and session.host == page and mode in MODES and session.host_mode != mode:
                 session.host_mode = mode
+                self._remember(session)
 
     def _host_session(self, sid: str, page: str) -> Session:
         session = self._sessions.get(sid)
@@ -453,5 +707,5 @@ class Registry:
             return None if session is None else self._shown(session, self._clock())
 
 
-REGISTRY = Registry()
-"""The app's sessions. ``web`` gives it the way to ask whether a page is connected (``Registry.set_connected``)."""
+REGISTRY = Registry(store=REMEMBER_FILE)
+"""The app's sessions, their settings kept in REMEMBER_FILE. ``web`` gives it the way to ask whether a page is connected (``Registry.set_connected``)."""
