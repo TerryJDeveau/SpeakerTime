@@ -112,17 +112,21 @@ _WIDTHS = """() => {
 }"""
 
 # The panel against its figures (v1.11): its width and Remaining's figures', how far off centre it stands in its
-# element, how far the host's sliders stand from Remaining's figures (and their left edges), and whether it runs past
-# the window (a scroll bar), its left edge then at its element's.
+# element and Remaining's figures stand in it, how far the host's sliders stand from the timers (and their left
+# edges), and whether it runs past the window (a scroll bar), its left edge then at its element's.
 _HUG = f"""() => {{
   const r = {_CLOCK_ROOT};
   const panel = r.querySelector('.clock').getBoundingClientRect(), outer = r.querySelector('.scroll').getBoundingClientRect();
   const value = r.querySelector('[data-v="remaining"]').getBoundingClientRect();
   const sliders = [...r.querySelectorAll('input.size')].filter(s => !s.hidden).map(s => s.getBoundingClientRect());
   const scroll = r.querySelector('.scroll');
+  // The timers' right edge: their figures', or their labels' where a label is the wider ("Time Remaining" at 100).
+  const right = Math.max(...['elapsed', 'remaining'].flatMap(n => ['[data-v="' + n + '"]', '[data-l="' + n + '"]'])
+    .map(s => r.querySelector(s).getBoundingClientRect().right));
   return {{ panel: Math.round(panel.width), remaining: Math.round(value.width),
            off: Math.round((panel.left - outer.left) - (outer.right - panel.right)),
-           gap: sliders.length ? Math.round(sliders[0].left - value.right) : null, lefts: sliders.map(s => Math.round(s.left)),
+           centre: Math.round((value.left + value.right) / 2 - (panel.left + panel.right) / 2),
+           gap: sliders.length ? Math.round(sliders[0].left - right) : null, lefts: sliders.map(s => Math.round(s.left)),
            scrolls: scroll.scrollWidth > scroll.clientWidth, left: Math.round(panel.left - outer.left) }};
 }}"""
 
@@ -559,6 +563,21 @@ def sizes_and_modes(a: Page, b: Page, c: Page, pip: Page, shot) -> Page:
         ok(f"{who} panel at 800 in a window of 1100 px: wider than it, a scroll bar, its left edge at the page's",
            seen["scrolls"] and seen["left"] == 0 and abs(seen["panel"] - (seen["remaining"] + 16 + tools)) <= 1, seen)
         page.set_viewport_size(size)
+    # v1.12: with both timers small the host's panel is wider than they need (480 px on a computer, its row of buttons
+    # on one line; the page's width on a phone): the width to spare goes to its outer edges, so the sliders still stand
+    # just beside the figures, and the figures in the middle (seen live in v1.11: 36 px between them at the default).
+    size = c.viewport_size
+    on_clock(c, _SLIDE, ["remaining", 100])
+    c.wait_for_timeout(2500)
+    for width in (1700, size["width"]):
+        c.set_viewport_size({"width": width, "height": 900})
+        c.wait_for_timeout(800)
+        seen = on_clock(c, _HUG)
+        ok(f"the host's panel, both timers at 100, in a window of {width} px: "
+           + ("480 px, " if width >= 640 else "the page's width, ")
+           + "the sliders just beside the timers (here their labels, wider than the figures), the figures in the middle",
+           (seen["panel"] == 480 if width >= 640 else not seen["scrolls"]) and 0 <= seen["gap"] <= 8 and abs(seen["centre"]) <= 1, seen)
+    c.set_viewport_size(size)
     on_clock(c, _SLIDE, ["remaining", 400])
     c.wait_for_timeout(2500)
     a.set_viewport_size({"width": 800, "height": 900})
