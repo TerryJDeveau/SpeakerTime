@@ -77,6 +77,7 @@ from __future__ import annotations
 import datetime
 import hashlib
 import json
+import math
 import re
 import urllib.parse
 import uuid
@@ -206,12 +207,26 @@ _CHAR_EM = 0.62
 # bound now the timers' column (cqw). Below that ratio the side column
 # would cost the figures more width than it gives them height (measured
 # by hand: about even at 5:2 with the Time Left Warning shown).
-_PANEL_UNIT = "clamp(8px, 8cqw, 56px)"
+_PANEL_UNIT_PX = 56
+_PANEL_UNIT = f"clamp(8px, 8cqw, {_PANEL_UNIT_PX}px)"
 _PIP_UNIT = "min(7.7vw, 13.5vh)"
 _PIP_WIDE_UNIT = "min(7.7cqw, 18.75vh)"
 _PIP_WIDE = "5/2"
 _PIP_LARGEST = 4
 """A pop-out's figures stop at this many units (400 on the slider): larger would leave its window (Terry, 2026-11-03)."""
+
+# v1.8 (Terry, 2026-11-03): the panel grows with the window only as far as
+# the figures need, "HH:MM:SS" (an hour of two digits at the most) at the
+# slider's largest, 800: eight characters at 0.62 em, eight units of 56 px,
+# 2223 px for the figures' column; then the panel's padding and, on the
+# host's panel, the columns of the sliders and colour buttons. A wider
+# window centres it.
+_WIDEST_TEXT = "12:34:56"
+_PANEL_FIGURES_PX = math.ceil(len(_WIDEST_TEXT) * _CHAR_EM * SIZE_MAX / 100 * _PANEL_UNIT_PX)
+_PANEL_PAD_PX = 8
+"""The panel's padding at the left and at the right."""
+_TOOLS_PX = 56
+"""On the host's panel, the slider's column (30 px) and the colour buttons' (26 px) beside each timer; as much again at the left keeps the figures centred."""
 
 _DRAW_MS = 100
 """The clock is drawn every 100 ms: a second's change shows within a tenth of a second."""
@@ -280,7 +295,9 @@ _LOOK_CSS = f"""
   background: var(--panel); color: var(--text);
 """
 
-# Rules the panel and the pop-out share: the figures' colours, red, blinking, the warning's figures.
+# Rules the panel and the pop-out share: the figures' colours, red, blinking, the warning's figures. The Time
+# Limit and the Time Left Warning stand together in the middle, as the switch's two buttons do, two of their
+# labels' heights apart (Terry, 2026-11-03: not spread across the width; each took half of it until v1.7).
 _SHARED_CSS = f"""
 .value[data-v="elapsed"] {{ color: var(--c-elapsed); }}
 .value[data-v="remaining"] {{ color: var(--c-remaining); }}
@@ -290,7 +307,8 @@ _SHARED_CSS = f"""
 .blink {{ animation: speakertime-blink {_BLINK_S}s steps(1, end) infinite; }}
 @keyframes speakertime-blink {{ 50% {{ opacity: 0.15; }} }}
 .pair {{ display: flex; justify-content: center; container-type: inline-size; }}
-.pair .cell {{ flex: 1 1 0; container-type: normal; }}
+.pair .cell {{ flex: 0 1 auto; min-width: 0; container-type: normal; }}
+.pair .label {{ text-align: center; }}
 .pair .cell[hidden] {{ display: none; }}
 .modes button.on {{ background: var(--text); color: var(--panel); }}
 """
@@ -319,6 +337,7 @@ _PIP_CSS = f"""
   .limit .value {{ font-size: min(7vw, 9vh); font-weight: 600; }}
   .row[data-r="remaining"], .row[data-r="limit"] {{ margin-top: 3vh; }}
   {_SHARED_CSS}
+  .pair .cell + .cell {{ margin-left: calc(2 * min(5vw, 6vh)); }}
   .modes {{ align-self: center; display: inline-flex; border: 1px solid var(--line); border-radius: 6px;
     overflow: hidden; margin-top: 0.5vh; }}
   .modes button {{ font: inherit; font-size: max(10px, min(3.4vw, 4.2vh)); color: var(--text);
@@ -333,7 +352,7 @@ _PIP_CSS = f"""
     .side {{ display: flex; flex-direction: column; align-items: center; gap: 3vh; flex: none; }}
     .side .row[data-r="limit"] {{ margin-top: 0; }}
     .side .pair {{ flex-direction: column; gap: 3vh; container-type: normal; }}
-    .side .pair .cell {{ flex: none; }}
+    .side .pair .cell {{ flex: none; margin-left: 0; }}
     body.gone .timers, body.gone .side {{ display: none; }}
   }}
 """
@@ -653,11 +672,13 @@ _CLOCK_HTML = (
 _CLOCK_CSS = f"""
 .clock {{
   {_LOOK_CSS}
-  border-radius: 14px; padding: 14px 8px 12px; box-shadow: inset 0 0 0 1px var(--line);
+  border-radius: 14px; padding: 14px {_PANEL_PAD_PX}px 12px; box-shadow: inset 0 0 0 1px var(--line);
+  box-sizing: border-box; max-width: {_PANEL_FIGURES_PX + 2 * _PANEL_PAD_PX}px; margin: 0 auto;
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 }}
+.clock.host {{ max-width: {_PANEL_FIGURES_PX + 2 * _PANEL_PAD_PX + 2 * _TOOLS_PX}px; }}
 .row {{ display: grid; grid-template-columns: minmax(0, 1fr); margin-bottom: 10px; }}
-.clock.host .row {{ grid-template-columns: 56px minmax(0, 1fr) 30px 26px; }}
+.clock.host .row {{ grid-template-columns: {_TOOLS_PX}px minmax(0, 1fr) 30px 26px; }}
 .cell {{ grid-column: 1; container-type: inline-size; min-width: 0;
   display: flex; flex-direction: column; align-items: center; line-height: 1; }}
 .pair {{ grid-column: 1; min-width: 0; }}
@@ -674,6 +695,7 @@ _CLOCK_CSS = f"""
   font-size: min(calc(var(--scale) * {_PANEL_UNIT}), calc(100cqw / (var(--chars) * {_CHAR_EM}))); }}
 .limit .value {{ font-size: clamp(22px, 7.6cqw, 54px); font-weight: 600; }}
 .limit .label {{ font-size: clamp(14px, 3.6cqw, 22px); }}
+.pair .cell + .cell {{ margin-left: clamp(28px, 7.2cqw, 44px); }}
 .row[data-r="remaining"], .row[data-r="limit"] {{ margin-top: 20px; }}
 {_SHARED_CSS}
 .tools {{ display: flex; justify-content: center; align-items: center; flex-wrap: wrap; gap: 8px 12px; margin-top: 4px; }}
