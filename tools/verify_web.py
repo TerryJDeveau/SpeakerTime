@@ -38,11 +38,11 @@ def check(what: str, got: object, expected: object) -> None:
         FAILURES.append(f"{what}: got {got!r}, expected {expected!r}")
 
 
-def sent(cookies: dict | None = None, tab: str = "", browser: str = "") -> dict:
-    """What the page's reader would send (``web._READER_JS``): cookies by name (values as kept: JSON encoded), the tab's session, the browser's id."""
+def sent(cookies: dict | None = None, tab: str = "", browser: str = "", tabid: str = "") -> dict:
+    """What the page's reader would send (``web._READER_JS``): cookies by name (values as kept: JSON encoded), the tab's session, the browser's and the tab's ids."""
     encoded = {name: value if isinstance(value, str) else urllib.parse.quote(json.dumps(value))
                for name, value in (cookies or {}).items()}
-    return {"cookies": encoded, "tab": tab, "browser": browser}
+    return {"cookies": encoded, "tab": tab, "browser": browser, "tabid": tabid}
 
 
 def page(heard: dict | None = None) -> AppTest:
@@ -161,11 +161,14 @@ def main() -> int:
     check("reloaded host's tab, session gone: its ID in the box",
           (hst.text_input(key=web._BOX).value, "Create New Session starts it again" in texts(hst)), ("LATER3", True))
     # Spoilt notes: the start screen.
-    e = page(sent({web.RECENT_COOKIE: "%7Bspoilt", web.HOSTS_COOKIE: "not json"}, tab="$$$", browser="no good!"))
+    e = page(sent({web.RECENT_COOKIE: "%7Bspoilt", web.HOSTS_COOKIE: "not json"}, tab="$$$", browser="no good!", tabid="x y"))
     check("spoilt notes: the start screen", e.session_state[web._SCREEN] if web._SCREEN in e.session_state else "start", "start")
     check("a spoilt browser id is not used", e.session_state[web._BROWSER], None)
+    check("a spoilt tab id is not used", e.session_state[web._TAB], None)
+    t = page(sent(browser="browserT1", tabid="tabT1abcd"))
+    check("the tab's id kept", t.session_state[web._TAB], "tabT1abcd")
 
-    for at_ in (a, b, b2, c, d, e, legacy, other, f, g, w, hst):
+    for at_ in (a, b, b2, c, d, e, legacy, other, f, g, w, hst, t):
         check("no exception", [x.value for x in at_.exception], [])
 
     for failure in FAILURES:

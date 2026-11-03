@@ -308,11 +308,42 @@ def display_checks() -> None:
     check("no browser id: nothing is open here", [sid for sid, _ in reg2.candidates(["CHARLIE"], "W3", None, {})], ["CHARLIE"])
 
 
+def tab_checks() -> None:
+    """A host and a viewer in two tabs of one browser, both holding the host's token (Terry, 2026-11-01, item 3)."""
+    clock = Clock()
+    on: set[str] = set()
+    reg = Registry(clock=clock, connected=lambda page: page in on)
+    on.update({"H1", "V1"})
+    _, token, _ = reg.create("TABS", "H1", "browser", None, "tab-h")
+    check("the viewer's tab, with the browser's token: a viewer", reg.join("TABS", "V1", token, "browser", None, "tab-v").role, VIEWER)
+    # The host's tab reloads: its old page closes, and the viewer's tab checks in before the new page joins.
+    on.discard("H1")
+    clock.step(1.0)
+    check("the host's tab reloading: the viewer's tab stays a viewer",
+          reg.check_in("TABS", "V1", token, "browser", None, "tab-v").role, VIEWER)
+    on.add("H2")
+    check("the host's tab, reloaded, hosts", reg.join("TABS", "H2", token, "browser", None, "tab-h").role, HOST)
+    # Reloaded again, joining while its old page still seems connected: a viewer, then the host at its check-in.
+    on.add("H3")
+    check("joining before its old page is seen closed: a viewer", reg.join("TABS", "H3", token, "browser", None, "tab-h").role, VIEWER)
+    on.discard("H2")
+    check("then the host at its check-in", reg.check_in("TABS", "H3", token, "browser", None, "tab-h").role, HOST)
+    # The host's tab closed for good: the viewer's tab is offered the role after the grace, like any viewer.
+    on.discard("H3")
+    clock.step(HOST_GRACE_S + 1)
+    checked = reg.check_in("TABS", "V1", token, "browser", None, "tab-v")
+    check("the host's tab closed: the viewer's tab offered the role, not given it", (checked.role, checked.shown.hosted), (VIEWER, False))
+    # A window of the browser coming to the session with the token (the creator back): the host.
+    on.add("N1")
+    check("a new window joining with the token hosts", reg.join("TABS", "N1", token, "browser", None, "tab-n").role, HOST)
+
+
 def main() -> int:
     timer_checks()
     id_checks()
     session_checks()
     display_checks()
+    tab_checks()
     for failure in FAILURES:
         print("FAIL", failure)
     print(f"{COUNT - len(FAILURES)} of {COUNT} checks passed")

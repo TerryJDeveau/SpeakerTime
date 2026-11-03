@@ -454,6 +454,26 @@ def windows_of_one_browser(browser, errors: list[str]) -> None:
     ok("Rejoin: the host of BRAVO", where(w5) == "Session ID: BRAVO You are the host.", where(w5))
     profile.close()
 
+    # 15. A host and a viewer of one session in two tabs of one browser (Terry, 2026-11-01, item 3):
+    # the host's tab reloaded stays the host, though the viewer's tab holds the same cookies.
+    profile = browser.new_context(viewport={"width": 700, "height": 800})
+    host = window()
+    id_box(host).fill("DELTA")
+    button(host, "Create New Session").click()
+    host.get_by_text("You are the host.").wait_for()
+    viewer = window()
+    id_box(viewer).fill("DELTA")
+    button(viewer, "Connect to Session").click()
+    viewer.get_by_text("You are viewing it.").wait_for(timeout=5000)
+    for round_ in (1, 2):
+        host.reload()
+        host.get_by_text("You are the host.").wait_for(timeout=8000)
+        host.wait_for_timeout(2500)
+        ok(f"two tabs, the host's reloaded ({round_}): host and viewer as they were",
+           (where(host), where(viewer)) == ("Session ID: DELTA You are the host.", "Session ID: DELTA You are viewing it."),
+           [where(host), where(viewer)])
+    profile.close()
+
 
 profile_url = ""
 """The page's address, for windows_of_one_browser (set by run)."""

@@ -41,7 +41,9 @@ role meanwhile). A window opened again goes back by itself when there is no
 doubt which session it means: the one session it would host, or the one
 session of yours still running and not open in another window of the browser.
 With several, it offers a **Rejoin** button for each. One browser can host
-several sessions, view several, or both, each in a window of its own.
+several sessions, view several, or both, each in a window of its own; a
+host and a viewer of the same session can be two tabs of one browser (handy
+for trying it out): only the host's own tab is the host again after a reload.
 **Leave Session** forgets the session.
 
 ## Its own window, kept on top
@@ -56,7 +58,8 @@ A web page cannot make itself open in a window of its own, but the browser can:
   just the timers. It stays above every other window, the slides included,
   and can be resized. This needs Chrome or Edge on a computer (version 116 or
   later). The page that opened it must stay open, but it can be hidden behind
-  other windows.
+  other windows. A browser keeps one pop-out at a time: opening one from
+  another tab or window of the same browser closes the first.
 - Or, on Windows, Microsoft PowerToys' *Always On Top* (Win+Ctrl+T) keeps any
   window on top, including an installed app's.
 

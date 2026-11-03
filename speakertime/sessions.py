@@ -24,6 +24,13 @@ The rules (Terry, 2026-10-30):
   (``set_size``). Each panel chooses its own way of showing the times; the
   host's is the default of a page as it opens, and of every page again each
   time a host connects (``host_mode``, ``host_epoch``).
+- (Terry, 2026-11-01, item 3) A host and a viewer may be two tabs of one
+  browser. Every tab of a browser holds the host's token (the cookie is the
+  browser's), so a page already showing the session takes the host's role
+  by the token only if it is the host's own tab (a reload of it: ``host_tab``);
+  another tab is a viewer like any other, offered the role after the grace.
+  Measured 2026-11-03: before this, the host's tab reloaded while a viewer's
+  tab of the same browser was open, and the viewer's tab became the host.
 """
 
 from __future__ import annotations
@@ -81,6 +88,8 @@ class Session:
     timer: Timer = field(default_factory=Timer)
     host: str | None = None
     """The hosting page's id; None once the host has left by Leave Session."""
+    host_tab: str | None = None
+    """The hosting page's tab (a random id the tab keeps through its reloads, ``web``); None where the page could not say."""
     host_seen: float = 0.0
     """When the host's page last checked in (the monotonic clock)."""
     viewers: dict[str, float] = field(default_factory=dict)
@@ -201,14 +210,16 @@ class Registry:
         connected = self._connected(page)
         return connected if connected is not None else now - seen < HOST_GRACE_S
 
-    def _make_host(self, session: Session, page: str, now: float, token: str | None = None, mode: str | None = None) -> None:
-        """``page`` hosts ``session`` from now; a new token unless the page brought the session's own.
+    def _make_host(self, session: Session, page: str, now: float, token: str | None = None, mode: str | None = None,
+                   tab: str | None = None) -> None:
+        """``page`` (of tab ``tab``) hosts ``session`` from now; a new token unless the page brought the session's own.
 
         The page's way of showing the times (``mode``, None for a page that has
         none yet) becomes the host's, and every other page takes it at its next
         check-in (``host_epoch``): Terry, 2026-11-01, "when the host connects".
         """
         session.host = page
+        session.host_tab = tab
         session.host_seen = now
         session.token = token or _new_token()
         session.viewers.pop(page, None)
@@ -247,7 +258,8 @@ class Registry:
         with self._lock:
             return sid in self._sessions
 
-    def create(self, sid: str | None, page: str, browser: str | None = None, mode: str | None = None) -> tuple[str, str, str | None]:
+    def create(self, sid: str | None, page: str, browser: str | None = None, mode: str | None = None,
+               tab: str | None = None) -> tuple[str, str, str | None]:
         """Create New Session: ``sid``, or a random ID for None. Returns the ID, the host's token and a notice (None for none).
 
         Refused when another page hosts a session of that ID. A session of the
@@ -263,7 +275,7 @@ class Registry:
             session = self._sessions.get(sid)
             if session is None:
                 session = Session(sid=sid, token=_new_token(), attended=now)
-                self._make_host(session, page, now, session.token, mode)
+                self._make_host(session, page, now, session.token, mode, tab)
                 self._sessions[sid] = session
                 self._note_browser(session, page, browser)
                 return sid, session.token, None
@@ -271,7 +283,7 @@ class Registry:
                 return sid, session.token, None
             if self._host_live(session, now):
                 raise Refused(f"Session {sid} already has a host. Please choose another session ID.")
-            self._make_host(session, page, now, mode=mode)
+            self._make_host(session, page, now, mode=mode, tab=tab)
             self._note_browser(session, page, browser)
             session.attended = now
             return sid, session.token, (
@@ -285,22 +297,28 @@ class Registry:
             session.browsers[page] = browser
 
     def _attend(self, session: Session, page: str, token: str | None, now: float,
-                browser: str | None, mode: str | None) -> Checked:
-        """``page`` has ``session`` open: its role, the host's if it brings the token and the host's page has closed."""
+                browser: str | None, mode: str | None, tab: str | None, joining: bool) -> Checked:
+        """``page`` has ``session`` open: its role, the host's if it brings the token and the host's page has closed.
+
+        A page already showing the session (``joining`` False: a check-in) takes
+        the role by the token only from its own tab's earlier page, or where
+        the host's tab is not known (module docstring: two tabs of one browser).
+        """
         session.attended = now
         self._note_browser(session, page, browser)
         if session.host == page:
             session.host_seen = now
             return Checked(HOST, self._shown(session, now), None)
-        if token is not None and token == session.token and self._host_gone(session, now):
-            self._make_host(session, page, now, token, mode)
+        own_tab = joining or session.host_tab is None or tab == session.host_tab
+        if token is not None and token == session.token and own_tab and self._host_gone(session, now):
+            self._make_host(session, page, now, token, mode, tab)
             return Checked(HOST, self._shown(session, now), token)
         session.viewers[page] = now
         return Checked(VIEWER, self._shown(session, now), None)
 
     def join(self, sid: str, page: str, token: str | None, browser: str | None = None,
-             mode: str | None = None) -> Checked | None:
-        """Connect to Session: None if there is no session ``sid`` (the page waits); otherwise this page's role.
+             mode: str | None = None, tab: str | None = None) -> Checked | None:
+        """Connect to Session (or a window going back to one): None if there is no session ``sid`` (the page waits); otherwise this page's role.
 
         A page bringing the session's token hosts it, unless another page that
         is still connected hosts it; any other page views it.
@@ -309,20 +327,21 @@ class Registry:
             now = self._clock()
             self._expire(now)
             session = self._sessions.get(sid)
-            return None if session is None else self._attend(session, page, token, now, browser, mode)
+            return None if session is None else self._attend(session, page, token, now, browser, mode, tab, True)
 
     def check_in(self, sid: str, page: str, token: str | None, browser: str | None = None,
-                 mode: str | None = None) -> Checked | None:
+                 mode: str | None = None, tab: str | None = None) -> Checked | None:
         """A page showing session ``sid`` checks in (once a second): its role now, and what it shows. None if the session is gone.
 
-        A viewer bringing the session's token becomes its host here once the
-        host's page has closed, as ``join`` would have made it: so the token's
-        holder is never left waiting behind its own old page.
+        A viewer of the host's own tab (the host's page reloaded) bringing the
+        session's token becomes its host here once the host's old page has
+        closed, as ``join`` would have made it: so the token's holder is never
+        left waiting behind its own old page. A viewer of another tab is not.
         """
         with self._lock:
             now = self._clock()
             session = self._sessions.get(sid)
-            return None if session is None else self._attend(session, page, token, now, browser, mode)
+            return None if session is None else self._attend(session, page, token, now, browser, mode, tab, False)
 
     def candidates(self, sids: list[str], page: str, browser: str | None,
                    tokens: dict[str, str]) -> list[tuple[str, bool]]:
@@ -353,7 +372,7 @@ class Registry:
                     found.append((sid, token is not None and token == session.token and self._host_gone(session, now)))
             return found
 
-    def assume_host(self, sid: str, page: str, mode: str | None = None) -> str:
+    def assume_host(self, sid: str, page: str, mode: str | None = None, tab: str | None = None) -> str:
         """Yes to "Assume Host Role?": this page hosts ``sid`` from now, with a new token, which is returned.
 
         Refused if the session has gone, or if a host has connected meanwhile
@@ -368,7 +387,7 @@ class Registry:
                 return session.token
             if self._host_live(session, now):
                 raise Refused(f"Someone else is now the host of session {sid}.")
-            self._make_host(session, page, now, mode=mode)
+            self._make_host(session, page, now, mode=mode, tab=tab)
             session.attended = now
             return session.token
 

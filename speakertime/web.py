@@ -40,14 +40,18 @@ pop-out starts at its panel's choice when it opens.
 
 What the browser keeps
 ----------------------
-Two cookies and one note per tab:
+Three cookies and two notes per tab:
 - ``speakertime_recent``: the sessions this browser was in, most recent first;
 - ``speakertime_hosts``: the host's token of each session hosted from it (the
   last ``_HOSTS_KEPT``);
 - ``speakertime_browser``: a random id, so that the server can tell this
   browser's own windows from others' (``sessions.Registry.candidates``);
 - the tab's own session, in its ``sessionStorage`` (``speakertime_tab``):
-  kept through a reload of that tab, and by no other tab.
+  kept through a reload of that tab, and by no other tab;
+- the tab's own random id, in its ``sessionStorage`` too
+  (``speakertime_tabid``), so that the server can tell the host's own tab,
+  reloaded, from another tab of the same browser, which holds the same
+  cookies (Terry, 2026-11-01: a host and a viewer in two tabs of one browser).
 A tab reloaded goes back to its own session (as host if it holds the token
 and no other page hosts it: Terry, 2026-10-30). A new window goes back by
 itself only when that leaves no doubt: the one session it would host, or
@@ -100,9 +104,11 @@ LEGACY_LAST_COOKIE = "speakertime_last"
 """Until 2026-11-01 the one session remembered; read once as the recent list, then removed."""
 TAB_KEY = "speakertime_tab"
 """The tab's own session, in its sessionStorage."""
+TAB_ID_KEY = "speakertime_tabid"
+"""The tab's own random id, in its sessionStorage."""
 
 _BROWSER_ID = re.compile(r"[A-Za-z0-9]{8,64}")
-"""A browser id as the page's script makes one (``_READER_JS``); anything else in the cookie is ignored."""
+"""A browser's or a tab's id as the page's script makes one (``_READER_JS``); anything else is ignored."""
 
 # The screens.
 START = "start"
@@ -118,6 +124,7 @@ _BOX = "box"              # the Session ID box
 _LIMIT_BOX = "limit_box"  # the Time Limit box (minutes)
 _TOKENS = "tokens"        # the host's token of each session this browser hosted: {sid: token}
 _BROWSER = "browser"      # this browser's id (None if its script could not say)
+_TAB = "tab"              # this tab's id (None if its script could not say)
 _REJOIN = "rejoin"        # the sessions a new window could go back to, when it cannot tell which: [(sid, as host)]
 _NOTICE = "notice"        # a message shown once: (kind, text), kind one of st's "success", "info", "warning", "error"
 _DECLINED = "declined"    # the sessions whose "Assume Host Role?" this page answered No
@@ -238,6 +245,8 @@ const hub = () => (window.speakerTime ??= {{
   lastKick: 0,      // when the pop-out last asked for one
   kick: null,       // asks for a check-in (the latest sync element's trigger)
   pip: null,        // the pop-out window, while open
+  opening: false,   // a pop-out asked for and not yet given
+  pipOpenedAt: -Infinity,  // when the pop-out last opened (performance.now())
   pageMode: CLOCK,  // the panel's way of showing the times (the page's own switch)
   pipMode: CLOCK,   // the pop-out's (its own switch; the panel's when it opened)
   preview: {{}},     // the host's slider while dragged, before the size comes back from the server
@@ -328,6 +337,7 @@ const hub = () => (window.speakerTime ??= {{
     win.setInterval(tick, DRAW_MS);
     win.addEventListener("pagehide", () => {{ if (h.pip === win) h.pip = null; }});
     h.pip = win;
+    h.pipOpenedAt = performance.now();
   }},
 }});
 """
@@ -375,11 +385,22 @@ _CLOCK_CSS = f"""
 _POP_OPEN = "Pop out (stays on top)"
 _POP_CLOSE = "Close the pop-out"
 
+_POP_GUARD_MS = 1000
+"""A click on the pop-out's button this soon after the pop-out opened is ignored: a double click would close it at once.
+
+Terry (2026-11-01) saw a pop-out "appear then immediately disappear". Two
+causes are possible and both are dealt with or told: a double click (this),
+and a second pop-out opened from another tab or window of the same browser,
+which Chrome allows one of at a time, closing the first (measured
+2026-11-03; the README says so).
+"""
+
 _CLOCK_JS = (
     _HUB_JS
     + f"""
 const POP_OPEN = {json.dumps(_POP_OPEN)};
 const POP_CLOSE = {json.dumps(_POP_CLOSE)};
+const POP_GUARD_MS = {_POP_GUARD_MS};
 
 // The Document Picture-in-Picture API of the top window: a pop-out may be
 // opened only from a top-level page (Chrome: "only allowed from a top-level
@@ -442,16 +463,22 @@ export default function (component) {{
   if (api !== null) {{
     pop.hidden = false;
     pop.addEventListener("click", async () => {{
+      // A second click while the pop-out is coming, or just after it came (a
+      // double click), would close it again at once: ignored.
+      if (h.opening || performance.now() - h.pipOpenedAt < POP_GUARD_MS) return;
       note.hidden = true;
       if (h.pip !== null) {{
         h.pip.close();
         return;
       }}
+      h.opening = true;
       try {{
         h.openPip(await api.requestWindow({{ width: 340, height: 280 }}));
       }} catch (error) {{
         note.textContent = "The pop-out could not be opened: " + error.message;
         note.hidden = false;
+      }} finally {{
+        h.opening = false;
       }}
     }});
   }}
@@ -480,9 +507,14 @@ export default function (component) {
 # ratesplot's reader, batch 24.6: through the page's own script, since on
 # Streamlit Community Cloud the proxy filters cookies from st.context.cookies).
 # The cookies by name ("" for one not set), the tab's own session from its
-# sessionStorage ("" for none), and the browser's id, made and kept if the
-# browser had none. Sent once; the page starts from it on the run that follows.
+# sessionStorage ("" for none), and the browser's and the tab's ids, each made
+# and kept if there was none. Sent once; the page starts from it on the run
+# that follows.
 _READER_JS = """
+const randomId = () => (typeof crypto !== "undefined" && crypto.randomUUID
+  ? crypto.randomUUID().replace(/-/g, "")
+  : Math.random().toString(36).slice(2) + Date.now().toString(36)).slice(0, 24);
+
 export default function (component) {
   const { data, setTriggerValue } = component;
   const cookies = {};
@@ -504,16 +536,23 @@ export default function (component) {
   }
   let browser = cookies[data.browser] || "";
   if (!/^[A-Za-z0-9]{8,64}$/.test(browser)) {
-    const random = typeof crypto !== "undefined" && crypto.randomUUID
-      ? crypto.randomUUID().replace(/-/g, "")
-      : Math.random().toString(36).slice(2) + Date.now().toString(36);
-    browser = random.slice(0, 24);
+    browser = randomId();
     try {
       document.cookie = data.browser + "=" + browser + "; max-age=" + data.seconds + "; path=/; SameSite=Lax"
         + (location.protocol === "https:" ? "; Secure" : "");
     } catch (error) {}  // no cookies for this page: the id lasts this visit
   }
-  setTriggerValue("cookies", { cookies, tab, browser });
+  let tabid = "";
+  try {
+    tabid = sessionStorage.getItem(data.tabid) ?? "";
+    if (!/^[A-Za-z0-9]{8,64}$/.test(tabid)) {
+      tabid = randomId();
+      sessionStorage.setItem(data.tabid, tabid);
+    }
+  } catch (error) {
+    tabid = "";  // no storage for this page: the server cannot tell its tab
+  }
+  setTriggerValue("cookies", { cookies, tab, browser, tabid });
 }
 """
 
@@ -642,6 +681,10 @@ def _browser() -> str | None:
     return st.session_state.get(_BROWSER)
 
 
+def _tab() -> str | None:
+    return st.session_state.get(_TAB)
+
+
 def _mode() -> str | None:
     return st.session_state.get(_MODE)
 
@@ -684,11 +727,11 @@ def _enter(sid: str, checked: Checked) -> None:
 
 
 def _join(sid: str) -> Checked | None:
-    return REGISTRY.join(sid, _page(), _tokens().get(sid), _browser(), _mode())
+    return REGISTRY.join(sid, _page(), _tokens().get(sid), _browser(), _mode(), _tab())
 
 
 def _check_in(sid: str) -> Checked | None:
-    return REGISTRY.check_in(sid, _page(), _tokens().get(sid), _browser(), _mode())
+    return REGISTRY.check_in(sid, _page(), _tokens().get(sid), _browser(), _mode(), _tab())
 
 
 # -- what the browser keeps, read at the visit's start ------------------------------
@@ -705,6 +748,8 @@ class Heard:
     """The host token of each session hosted from this browser."""
     browser: str | None = None
     """The browser's id."""
+    tabid: str | None = None
+    """The tab's id."""
 
 
 def _cookies_read() -> None:
@@ -755,6 +800,8 @@ def heard_cookies(sent: object) -> Heard:
                 heard.hosts[sid] = token
     browser = sent.get("browser")
     heard.browser = browser if isinstance(browser, str) and _BROWSER_ID.fullmatch(browser) else None
+    tabid = sent.get("tabid")
+    heard.tabid = tabid if isinstance(tabid, str) and _BROWSER_ID.fullmatch(tabid) else None
     return heard
 
 
@@ -771,6 +818,7 @@ def _start_visit() -> None:
     heard = heard_cookies(state.get(_HEARD))
     _tokens().update(heard.hosts)
     state[_BROWSER] = heard.browser
+    state[_TAB] = heard.tabid
     if heard.tab is not None:
         # A reload of a tab that was in a session: that session, and no other.
         checked = _join(heard.tab)
@@ -816,7 +864,7 @@ def _create() -> None:
         _notify("error", problem)
         return
     try:
-        sid, token, notice = REGISTRY.create(sid or None, _page(), _browser(), _mode())
+        sid, token, notice = REGISTRY.create(sid or None, _page(), _browser(), _mode(), _tab())
     except Refused as refusal:
         _notify("error", str(refusal))
         return
@@ -921,7 +969,7 @@ def _size_changed() -> None:
 def _assume_host() -> None:
     sid = st.session_state.get(_SID)
     try:
-        token = REGISTRY.assume_host(sid, _page(), _mode())
+        token = REGISTRY.assume_host(sid, _page(), _mode(), _tab())
     except Refused as refusal:
         _notify("error", str(refusal))
         return
@@ -1092,7 +1140,7 @@ def main() -> None:
         reader(
             key=_READER,
             data={"names": [RECENT_COOKIE, HOSTS_COOKIE, BROWSER_COOKIE, LEGACY_LAST_COOKIE], "tab": TAB_KEY,
-                  "browser": BROWSER_COOKIE, "seconds": _BROWSER_DAYS * 86400},
+                  "tabid": TAB_ID_KEY, "browser": BROWSER_COOKIE, "seconds": _BROWSER_DAYS * 86400},
             on_cookies_change=_cookies_read,
         )
         st.caption("Starting …")
