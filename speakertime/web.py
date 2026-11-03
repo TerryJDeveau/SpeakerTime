@@ -164,9 +164,11 @@ _LOST = "lost"            # the check-in's script found the clock gone from the 
 # colour. The figures are sized by their column's width (cqw: a hundredth of
 # it) times the host's size, and never wider than the column. The colours are
 # CSS variables on the panel (and the pop-out's body), set by the script from
-# the session's look.
+# the session's look. The red differs by theme: on black #ff5a4f looked
+# salmon, "not a deep enough red" (Terry, 2026-11-03); of five drawn on
+# black he chose #ff2a2a. On white the darker #d1242f, which he found good.
 _THEMES = {
-    DARK: {"panel": "#000000", "text": "#ffffff", "line": "#6b7280", "over": "#ff5a4f"},
+    DARK: {"panel": "#000000", "text": "#ffffff", "line": "#6b7280", "over": "#ff2a2a"},
     LIGHT: {"panel": "#ffffff", "text": "#000000", "line": "#9ca3af", "over": "#d1242f"},
 }
 """Each theme's background, other text, lines (buttons' borders) and out-of-time red (darker on white, to read)."""
