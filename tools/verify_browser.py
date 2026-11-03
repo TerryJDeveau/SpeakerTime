@@ -460,6 +460,8 @@ profile_url = ""
 
 
 def main() -> int:
+    # The details print the figures' minus sign (U+2212), which Windows' console code page (cp1252) cannot encode.
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--url", help="test this running page instead of starting one")
     parser.add_argument("--chrome", action="store_true", help="use the installed Google Chrome")
