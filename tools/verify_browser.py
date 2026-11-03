@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import socket
 import subprocess
@@ -75,18 +76,22 @@ _FIGURES = """(root) => {
 }"""
 _PANEL = f"() => ({_FIGURES})({_CLOCK_ROOT})"
 _POPOUT = f"() => ({_FIGURES})(document)"
-# A pop-out's layout: each timer's figures as a share of its height, whether the Time Limit stands beside the timers
-# (not under them), and any label, figures or switch that leaves the window.
-_LAYOUT = """() => {
-  const H = innerHeight, W = innerWidth;
-  const shown = [...document.querySelectorAll('.label, .value, .modes')].filter(e => e.getClientRects().length);
-  const outside = shown.filter(e => { const b = e.getBoundingClientRect();
-    return b.top < -0.5 || b.bottom > H + 0.5 || b.left < -0.5 || b.right > W + 0.5; }).map(e => e.dataset.v ?? e.dataset.l ?? 'modes');
-  const share = (n) => +(parseFloat(getComputedStyle(document.querySelector('[data-v="' + n + '"]')).fontSize) / H).toFixed(3);
-  const row = (n) => document.querySelector('.row[data-r="' + n + '"]').getBoundingClientRect();
-  return { size: [W, H], elapsed: share('elapsed'), remaining: share('remaining'),
-           beside: row('limit').top < row('remaining').bottom, outside };
+# A pop-out's scaled copy of the panel (v1.11): its zoom and its size at the panel's sizes, each figure's size as shown
+# (its own times the zoom), whether all of it is inside the window, and how much of the window it fills.
+_COPY = """() => {
+  const stage = document.querySelector('.stage');
+  const zoom = parseFloat(stage.style.getPropertyValue('--z') || '1');
+  const px = (n) => parseFloat(getComputedStyle(document.querySelector('[data-v="' + n + '"]')).fontSize) * zoom;
+  const W = innerWidth, H = innerHeight, b = stage.getBoundingClientRect();
+  return { size: [W, H], zoom, natural: [stage.offsetWidth, stage.offsetHeight],
+           elapsedPx: px('elapsed'), remainingPx: px('remaining'), limitPx: px('limit'),
+           inside: b.left >= -0.5 && b.top >= -0.5 && b.right <= W + 0.5 && b.bottom <= H + 0.5,
+           filled: +Math.max(b.width / W, b.height / H).toFixed(3) };
 }"""
+# The size the opener's script last asked its pop-out's window to take, and whether the browser refused it.
+_WANT_EXPRESSION = "[window.speakerTime.pipWant, window.speakerTime.pipRefused]"
+_WANT = f"() => {_WANT_EXPRESSION}"
+_INNER = "() => ({ width: innerWidth, height: innerHeight })"
 
 # The host lets go of a slider at ``percent`` (as a drag ends: input, then change).
 _SLIDE = f"""([timer, percent]) => {{
@@ -106,31 +111,28 @@ _WIDTHS = """() => {
            others: kids.filter(k => !k.classList.contains('st-key-clock')).map(width) };
 }"""
 
-# The panel's width, how far off centre it stands in its element, and "12:34:56" at 800 (eight units) set in
-# Remaining's column: its size in px (shrunk if the column were too narrow) and its width beside the column's.
-_PANEL_WIDTH = f"""() => {{
+# The panel against its figures (v1.11): its width and Remaining's figures', how far off centre it stands in its
+# element, how far the host's sliders stand from Remaining's figures (and their left edges), and whether it runs past
+# the window (a scroll bar), its left edge then at its element's.
+_HUG = f"""() => {{
   const r = {_CLOCK_ROOT};
-  const panel = r.querySelector('.clock').getBoundingClientRect(), outer = r.host.getBoundingClientRect();
-  const cell = r.querySelector('[data-v="remaining"]').closest('.cell');
-  const probe = document.createElement('span');
-  probe.className = 'value';
-  probe.style.setProperty('--scale', '8');
-  probe.style.setProperty('--chars', '8');
-  probe.textContent = '12:34:56';
-  cell.appendChild(probe);
-  const out = {{ width: Math.round(panel.width), off: Math.round((panel.left - outer.left) - (outer.right - panel.right)),
-                 column: Math.round(cell.getBoundingClientRect().width), probePx: parseFloat(getComputedStyle(probe).fontSize),
-                 probeWidth: Math.round(probe.getBoundingClientRect().width) }};
-  probe.remove();
-  return out;
+  const panel = r.querySelector('.clock').getBoundingClientRect(), outer = r.querySelector('.scroll').getBoundingClientRect();
+  const value = r.querySelector('[data-v="remaining"]').getBoundingClientRect();
+  const sliders = [...r.querySelectorAll('input.size')].filter(s => !s.hidden).map(s => s.getBoundingClientRect());
+  const scroll = r.querySelector('.scroll');
+  return {{ panel: Math.round(panel.width), remaining: Math.round(value.width),
+           off: Math.round((panel.left - outer.left) - (outer.right - panel.right)),
+           gap: sliders.length ? Math.round(sliders[0].left - value.right) : null, lefts: sliders.map(s => Math.round(s.left)),
+           scrolls: scroll.scrollWidth > scroll.clientWidth, left: Math.round(panel.left - outer.left) }};
 }}"""
 
-# The Time Limit and the Time Left Warning: the space between them, their limit label's size, and how far off the
-# middle of their row the two stand together, on a panel (``root`` the clock's shadow root) or a pop-out (its document).
+# The Time Limit and the Time Left Warning: the space between them, their limit label's height (its size: its line
+# height is 1), and how far off the middle of their row the two stand together, on a panel (``root`` the clock's shadow
+# root) or a pop-out (its document), as drawn (in a pop-out, scaled).
 _GROUPED = """(root) => {
   const cell = (n) => root.querySelector('[data-v="' + n + '"]').closest('.cell').getBoundingClientRect();
   const l = cell('limit'), w = cell('warning'), p = root.querySelector('.pair').getBoundingClientRect();
-  return { gap: +(w.left - l.right).toFixed(1), label: parseFloat(getComputedStyle(root.querySelector('[data-l="limit"]')).fontSize),
+  return { gap: +(w.left - l.right).toFixed(1), label: +root.querySelector('[data-l="limit"]').getBoundingClientRect().height.toFixed(1),
            off: +((l.left + w.right) / 2 - (p.left + p.right) / 2).toFixed(1) };
 }"""
 
@@ -396,6 +398,7 @@ def run(url: str, launch: dict, shots: Path | None) -> None:
             ok("the kick brings more, the clock kept", kicked["checkIns"] > alone["checkIns"] + 3 and kicked["clockKept"], kicked)
 
             a_pip = sizes_and_modes(a, b, c, pip, shot)
+            viewer_popout_kept(a, c, a_pip)
             colours_and_warning(a, c, a_pip)
         windows_of_one_browser(browser, errors)
         popups_of_one_browser(browser, errors, shot)
@@ -418,38 +421,77 @@ def mode_of(page: Page) -> str | None:
     return on_clock(page, _PANEL)["mode"]
 
 
-def wide_and_low(c: Page, pip: Page, shot) -> None:
-    """12b. A pop-out at least 5:2: the Time Limit and the switch beside the timers, 400 at 75 % of the height (v1.7).
+def scaled_copy(c: Page, pip: Page, shot) -> None:
+    """12b. The pop-out is the host's panel scaled as a whole to fit its window, and its window follows the sizes (v1.11).
 
-    Terry, 2026-11-03, taking the option offered with v1.6 (54 % before, the
-    Time Limit and the switch under the timers). On entry C hosts TALK1 with
-    Elapsed at 100 and Remaining at 400, and leaves so.
+    Terry, 2026-11-03: the pop-out resized "if necessary to accommodate a
+    larger clock size", and resized by hand, the size shown scaled "so that
+    the pop-up looks like a scaled-up or scaled-down version of what the host
+    is seeing" (replacing v1.7's column beside the timers). Headless Chrome
+    keeps a window's inner size whatever a script asks (measured), so the
+    window's following is read from what the script asked for, and the
+    window then given that size by hand. On entry C hosts TALK1 with Elapsed
+    at 100 and Remaining at 400, ``pip`` its own pop-out; leaves so.
     """
-    size = pip.evaluate("() => [innerWidth, innerHeight]")
+    size = pip.evaluate(_INNER)
 
     def laid_out(width: int, height: int) -> dict:
         pip.set_viewport_size({"width": width, "height": height})
-        pip.wait_for_timeout(300)
-        return pip.evaluate(_LAYOUT)
+        pip.wait_for_timeout(400)
+        return pip.evaluate(_COPY)
 
-    on_clock(c, _SLIDE, ["elapsed", 25])  # the smallest, so that Remaining at 400 leaves room for everything else
-    c.wait_for_timeout(2500)
-    wide, stacked = laid_out(1200, 300), laid_out(600, 300)
-    ok("a pop-out of 1200 by 300: the Time Limit beside the timers, Remaining at 400 75 % of its height, all inside",
-       wide["beside"] and 0.74 <= wide["remaining"] <= 0.76 and not wide["outside"], wide)
-    ok("one of 600 by 300: under them as before, 54 %, all inside",
-       not stacked["beside"] and 0.53 <= stacked["remaining"] <= 0.55 and not stacked["outside"], stacked)
-    for timer in ("elapsed", "remaining"):
-        on_clock(c, _SLIDE, [timer, 200])
-        c.wait_for_timeout(2500)
-    default = laid_out(1200, 300)
-    ok("at the default, 200 each: 37.5 % of its height each, all inside",
-       0.37 <= default["elapsed"] <= 0.38 and 0.37 <= default["remaining"] <= 0.38 and not default["outside"], default)
+    # The panel's sizes on a computer (web._PIP_CSS): a unit of 56 px per 100 of the slider, the Time Limit 54 px.
+    natural = {"elapsedPx": 56 * 100 / 100, "remainingPx": 56 * 400 / 100, "limitPx": 54}
+    small, large = laid_out(600, 400), laid_out(1200, 800)
+    uniform = [round(s[k] / s["zoom"] / px, 3) for s in (small, large) for k, px in natural.items()]
+    ok("the pop-out a copy of the panel: Elapsed (100), Remaining (400) and the Time Limit at the panel's sizes times one"
+       " zoom, all inside, filling it", all(0.99 <= u <= 1.01 for u in uniform) and small["inside"] and large["inside"]
+       and 0.98 <= small["filled"] <= 1 and 0.98 <= large["filled"] <= 1, [uniform, small, large])
+    ok("its window made twice as large by hand: everything twice as large", 1.98 <= large["zoom"] / small["zoom"] <= 2.02,
+       [small["zoom"], large["zoom"]])
+    wide = laid_out(1600, 300)
+    ok("a wide, low window: the copy fits its height, all inside", wide["inside"] and abs(wide["filled"] - 0.99) <= 0.01, wide)
     shot(pip, "6b-popout-wide.png")
-    pip.set_viewport_size({"width": size[0], "height": size[1]})
-    for timer, percent in (("elapsed", 100), ("remaining", 400)):
-        on_clock(c, _SLIDE, [timer, percent])
-        c.wait_for_timeout(2500)
+    before = laid_out(600, 400)
+    on_clock(c, _SLIDE, ["remaining", 200])  # the host's own page, just clicked: Chrome lets its pop-out be resized
+    c.wait_for_timeout(2500)
+    want, refused = c.evaluate(_WANT)
+    shrunk = pip.evaluate(_COPY)
+    expected = [math.ceil(n * before["zoom"] / 0.99) for n in shrunk["natural"]]
+    ok("Remaining at 200: the host's pop-out asked to take the copy's new size at the zoom it had",
+       refused is False and all(abs(w - e) <= 2 for w, e in zip(want, expected)), [want, expected, before, shrunk])
+    after = laid_out(*want)
+    ok("given it: the same zoom, Remaining half its size there, Elapsed and the Time Limit unchanged",
+       abs(after["zoom"] / before["zoom"] - 1) <= 0.01 and 0.49 <= after["remainingPx"] / before["remainingPx"] <= 0.51
+       and abs(after["elapsedPx"] / before["elapsedPx"] - 1) <= 0.01 and abs(after["limitPx"] / before["limitPx"] - 1) <= 0.01,
+       [before, after])
+    on_clock(c, _SLIDE, ["remaining", 400])
+    c.wait_for_timeout(2500)
+    pip.set_viewport_size(size)
+
+
+def viewer_popout_kept(a: Page, c: Page, a_pip: Page) -> None:
+    """12c. A viewer's pop-out keeps its window when the host's sizes change, its copy scaled to fit it (v1.11).
+
+    Chrome lets a script resize a pop-out only within about 5 s of a click or
+    a key on its page (measured 2026-11-03: "resizeBy() requires user
+    activation in document picture-in-picture"). Playwright's own
+    evaluations count as clicks, so A's page is read here through CDP alone.
+    On entry C hosts TALK1 with Elapsed at 100 and Remaining at 400, A views
+    it with its pop-out (``a_pip``) open; leaves so.
+    """
+    read = quiet(a)
+    size = a_pip.evaluate(_INNER)
+    a.wait_for_timeout(6000)  # no activation left on A's page or its pop-out
+    on_clock(c, _SLIDE, ["remaining", 200])
+    c.wait_for_timeout(2500)
+    want, refused = read(_WANT_EXPRESSION)
+    copy = a_pip.evaluate(_COPY)
+    ok("a viewer's pop-out, the host's sizes changed: Chrome refuses to resize it, so its copy fills the window it has",
+       refused is True and copy["size"] == [size["width"], size["height"]] and copy["inside"] and abs(copy["filled"] - 0.99) <= 0.01,
+       [want, refused, copy])
+    on_clock(c, _SLIDE, ["remaining", 400])
+    c.wait_for_timeout(2500)
 
 
 def sizes_and_modes(a: Page, b: Page, c: Page, pip: Page, shot) -> Page:
@@ -483,8 +525,8 @@ def sizes_and_modes(a: Page, b: Page, c: Page, pip: Page, shot) -> Page:
     ok("Remaining at 400: a third larger again, on a viewer's panel and in the pop-out (not stopped short)",
        1.30 <= at_400["remainingPx"] / at_300["remainingPx"] <= 1.36 and 1.30 <= pip_400["remainingPx"] / pip_300["remainingPx"] <= 1.36,
        [at_300, at_400, pip_300, pip_400])
-    # v1.6 (Terry, 2026-11-03: "about double" the largest): 800 twice 400's size where the panel is wide enough, the
-    # page's other elements kept to their column; the pop-out stays at 400's size. Then back to 400 for what follows.
+    # v1.6 (Terry, 2026-11-03: "about double" the largest): 800 twice 400's size, the page's other elements kept to
+    # their column; since v1.11 in the pop-out's copy too (its window then follows, or the copy is scaled to fit it).
     a.set_viewport_size({"width": 1700, "height": 900})
     a.wait_for_timeout(800)
     wide_400 = on_clock(a, _PANEL)
@@ -492,27 +534,35 @@ def sizes_and_modes(a: Page, b: Page, c: Page, pip: Page, shot) -> Page:
     c.wait_for_timeout(2500)
     wide_800, pip_800 = on_clock(a, _PANEL), pip.evaluate(_POPOUT)
     widths = a.evaluate(_WIDTHS)
-    ok("Remaining at 800 on a wide panel: twice 400's; the pop-out stays at 400's",
-       1.9 <= wide_800["remainingPx"] / wide_400["remainingPx"] <= 2.1 and abs(pip_800["remainingPx"] - pip_400["remainingPx"]) < 0.5,
+    ok("Remaining at 800: twice 400's, on a viewer's panel and in the pop-out's copy",
+       1.9 <= wide_800["remainingPx"] / wide_400["remainingPx"] <= 2.1 and 1.9 <= pip_800["remainingPx"] / pip_400["remainingPx"] <= 2.1,
        [wide_400, wide_800, pip_400, pip_800])
-    ok("the clock spans the wide page, everything else keeps its column (704 px)",
+    ok("the clock's element spans the wide page, everything else keeps its column (704 px)",
        widths["clock"] > 1400 and max(widths["others"]) <= 704, widths)
-    # v1.8 (Terry, 2026-11-03): no wider than "HH:MM:SS" needs at 800, so a window of 2800 px leaves it centred:
-    # a figures' column of 2223 px (8 characters at 0.62 em, at 8 units of 56 px) with 8 px of padding each side,
-    # and on the host's panel 56 px more each side for the sliders and colour buttons.
-    for page, who, expected in ((a, "a viewer's", 2239), (c, "the host's", 2351)):
+    # v1.11 (Terry, 2026-11-03): the panel as wide as its figures need, not as the window, centred; the host's sliders
+    # in one column just beside the larger timer's figures (Remaining, here); and a panel wider than the window runs
+    # past its edge, a scroll bar under it.
+    for page, who, tools in ((a, "a viewer's", 0), (c, "the host's", 112)):
         size = page.viewport_size
-        page.set_viewport_size({"width": 2800, "height": 900})
+        page.set_viewport_size({"width": 1700, "height": 900})
         page.wait_for_timeout(800)
-        seen = on_clock(page, _PANEL_WIDTH)
-        ok(f"{who} panel in a window of 2800 px: {expected} px, centred; 12:34:56 at 800 fits its column unshrunk",
-           abs(seen["width"] - expected) <= 1 and abs(seen["off"]) <= 1 and seen["column"] == 2223
-           and seen["probePx"] == 448 and seen["probeWidth"] <= seen["column"], seen)
+        seen = on_clock(page, _HUG)
+        ok(f"{who} panel at 800 in a window of 1700 px: as wide as Remaining's figures with its padding"
+           + (" and the sliders' columns" if tools else "") + ", centred",
+           abs(seen["panel"] - (seen["remaining"] + 16 + tools)) <= 1 and abs(seen["off"]) <= 1 and not seen["scrolls"], seen)
+        if tools:
+            ok("the host's sliders in one column, just beside Remaining's figures",
+               len(set(seen["lefts"])) == 1 and 0 <= seen["gap"] <= 8, seen)
+        page.set_viewport_size({"width": 1100, "height": 900})
+        page.wait_for_timeout(800)
+        seen = on_clock(page, _HUG)
+        ok(f"{who} panel at 800 in a window of 1100 px: wider than it, a scroll bar, its left edge at the page's",
+           seen["scrolls"] and seen["left"] == 0 and abs(seen["panel"] - (seen["remaining"] + 16 + tools)) <= 1, seen)
         page.set_viewport_size(size)
     on_clock(c, _SLIDE, ["remaining", 400])
     c.wait_for_timeout(2500)
     a.set_viewport_size({"width": 800, "height": 900})
-    wide_and_low(c, pip, shot)
+    scaled_copy(c, pip, shot)
 
     # 13. Ways of showing the times. The host's switch changes its own panel only, and not its pop-out.
     ok("all start at H:MM:SS", (mode_of(c), mode_of(a), pip.evaluate(_POPOUT)["mode"]) == ("clock", "clock", "clock"))

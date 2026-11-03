@@ -88,7 +88,6 @@ from __future__ import annotations
 import datetime
 import hashlib
 import json
-import math
 import os
 import re
 import urllib.parse
@@ -157,6 +156,7 @@ _BOX = "box"              # the Session ID box
 _LIMIT_BOX = "limit_box"  # the Time Limit box (minutes)
 _WARN_BOX = "warn_box"    # the Time Left Warning box (minutes)
 _PICKER = "warn_colours"  # the warning's colour buttons: their trigger, "pick"
+_START_BUTTON = "start"   # the host's Start button, which reads Restart once the timer has run
 _TOKENS = "tokens"        # the host's token of each session this browser hosted: {sid: token}
 _BROWSER = "browser"      # this browser's id (None if its script could not say)
 _TAB = "tab"              # this tab's id (None if its script could not say)
@@ -178,8 +178,8 @@ _SYNC = "sync"            # the check-in's element: its triggers, "tick" (the po
 # timer's colour for everyone. Remaining turns red, and blinks, once it shows
 # zero or less, and its label reads "Overtime" while it is negative (Terry,
 # 2026-11-01); between the Time Left Warning and zero it is in the warning's
-# colour. The figures are sized by their column's width (cqw: a hundredth of
-# it) times the host's size, and never wider than the column. The colours are
+# colour. The figures are sized by a unit times the host's size, and the
+# panel by its figures (v1.11; until then by its column's width). The colours are
 # CSS variables on the panel (and the pop-out's body), set by the script from
 # the session's look. The red differs by theme: on black #ff5a4f looked
 # salmon, "not a deep enough red" (Terry, 2026-11-03); of five drawn on
@@ -211,38 +211,41 @@ _CHAR_EM = 0.62
 # (main), and the unit stops at 56 px, so a size looks as it did in v1.3 on
 # a computer while 800 doubles it where the panel is wide enough; figures
 # never grow wider than their column, and on a phone the unit stays 8 cqw.
-# The pop-out's figures are bounded by its width (96 vw: 31 vw for five
-# characters, so 7.7 vw) and, in a wide and low pop-out, by its height,
-# and stop at 400's size (_PIP_LARGEST): 54 vh at the most, leaving the
-# rest for the labels, the other timer and the Time Limit. Longer figures
-# ("1:02:03") still shrink to fit near the top of the range.
-# v1.7 (Terry, 2026-11-03, the option offered with v1.6): in a pop-out at
-# least _PIP_WIDE as wide as it is high, the Time Limit and the switch
-# stand beside the timers rather than under them, which leaves the height
-# to the timers alone: 400 reaches 75 vh (18.75 vh a unit), the width
-# bound now the timers' column (cqw). Below that ratio the side column
-# would cost the figures more width than it gives them height (measured
-# by hand: about even at 5:2 with the Time Left Warning shown).
+# v1.11 (Terry, 2026-11-03): the panel is as wide as its figures, not as
+# its window, so the sliders and colour buttons stand just beside the
+# larger timer; the figures keep the size the slider gives them, and a
+# panel wider than the window runs past its edge, with a scroll bar under
+# it. The unit is 56 px on a computer and 8 vw on a phone, where the
+# figures still shrink to fit the width (_PHONE_PX). The labels, the Time
+# Limit and the space between it and the warning are sized by the window
+# (vw) as they were by the panel (cqw) before: the panel cannot be a
+# container its own contents are sized by.
 _PANEL_UNIT_PX = 56
-_PANEL_UNIT = f"clamp(8px, 8cqw, {_PANEL_UNIT_PX}px)"
-_PIP_UNIT = "min(7.7vw, 13.5vh)"
-_PIP_WIDE_UNIT = "min(7.7cqw, 18.75vh)"
-_PIP_WIDE = "5/2"
-_PIP_LARGEST = 4
-"""A pop-out's figures stop at this many units (400 on the slider): larger would leave its window (Terry, 2026-11-03)."""
-
-# v1.8 (Terry, 2026-11-03): the panel grows with the window only as far as
-# the figures need, "HH:MM:SS" (an hour of two digits at the most) at the
-# slider's largest, 800: eight characters at 0.62 em, eight units of 56 px,
-# 2223 px for the figures' column; then the panel's padding and, on the
-# host's panel, the columns of the sliders and colour buttons. A wider
-# window centres it.
-_WIDEST_TEXT = "12:34:56"
-_PANEL_FIGURES_PX = math.ceil(len(_WIDEST_TEXT) * _CHAR_EM * SIZE_MAX / 100 * _PANEL_UNIT_PX)
+_PANEL_UNIT = f"clamp(8px, 8vw, {_PANEL_UNIT_PX}px)"
 _PANEL_PAD_PX = 8
 """The panel's padding at the left and at the right."""
 _TOOLS_PX = 56
 """On the host's panel, the slider's column (30 px) and the colour buttons' (26 px) beside each timer; as much again at the left keeps the figures centred."""
+_PANEL_MIN_PX = 480
+"""The narrowest panel (or the page's width, if less): its row of buttons fits on one line."""
+_PHONE_PX = 640
+"""In a window narrower than this, the panel is no wider than the page and the figures shrink to fit it, as before v1.11: a phone's page is not scrolled sideways."""
+_ROOM_TEXT = "00:00"
+"""The figures keep room for this text however short they are, so the panel does not narrow when "10:00" becomes "9:59"."""
+
+# v1.11 (Terry, 2026-11-03): the pop-out and the pop-up show the panel's
+# figures, Time Limit and switch at the panel's own sizes, scaled as a
+# whole to fit the window (a scaled copy of what the host sees, so a window
+# made larger or smaller by hand shows everything larger or smaller); when
+# the sizes change, the window follows at the same scale, where the browser
+# lets it. Chrome lets a script resize a pop-up at any time, and a pop-out
+# only within about 5 s of a click or a key on the page (measured
+# 2026-11-03, Chrome 156: "resizeBy() requires user activation in document
+# picture-in-picture"), so the host's own pop-out follows its sliders and a
+# viewer's does not: its window stays, and the copy is scaled to fit it.
+# This replaces v1.7's column beside the timers in a wide, low pop-out.
+_PIP_FILL = 0.99
+"""The share of the pop-out's width or height the scaled copy fills."""
 
 _DRAW_MS = 100
 """The clock is drawn every 100 ms: a second's change shows within a tenth of a second."""
@@ -342,8 +345,10 @@ _SHARED_CSS = f"""
 .value.over, .value.buzz {{ color: var(--over); }}
 .blink {{ animation: speakertime-blink {_BLINK_S}s steps(1, end) infinite; }}
 @keyframes speakertime-blink {{ 50% {{ opacity: 0.15; }} }}
-.pair {{ display: flex; justify-content: center; container-type: inline-size; }}
-.pair .cell {{ flex: 0 1 auto; min-width: 0; container-type: normal; }}
+.value {{ text-align: center; }}
+.value::before {{ content: "{_ROOM_TEXT}"; display: block; height: 0; overflow: hidden; visibility: hidden; }}
+.pair {{ display: flex; justify-content: center; }}
+.pair .cell {{ flex: 0 1 auto; min-width: 0; }}
 .pair .label {{ text-align: center; }}
 .pair .cell[hidden] {{ display: none; }}
 .modes button.on {{ background: var(--text); color: var(--panel); }}
@@ -352,45 +357,37 @@ _SHARED_CSS = f"""
 _GONE_TEXT = "Its SpeakerTime tab has gone: close this window."
 """Shown in a pop-up instead of the figures once its tab has stopped drawing them (closed, or reloaded and not back)."""
 
-# The timers, and the Time Limit with the switch: two groups that are no boxes of their own (display: contents)
-# until a wide, low pop-out sets them side by side.
+# The timers, the Time Limit and the switch at the panel's sizes on a computer (the stage), scaled as a whole to
+# fit the window by the script (--z, hub.fitPip).
 _PIP_HTML = (
-    '<div class="timers">' + _row("elapsed", False) + _row("remaining", False) + "</div>"
-    + '<div class="side">' + _row("limit", False) + _MODES_HTML + "</div>"
+    '<div class="stage">' + _row("elapsed", False) + _row("remaining", False) + _row("limit", False) + _MODES_HTML + "</div>"
     + f'<div class="gone-note">{_GONE_TEXT}</div>'
 )
 
 _PIP_CSS = f"""
   html {{ height: 100%; }}
   body {{ {_LOOK_CSS} margin: 0; height: 100%; font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-    display: flex; flex-direction: column; justify-content: center; gap: 1vh; overflow: hidden;
-    --unit: {_PIP_UNIT}; --room: 96vw; }}
-  .timers, .side {{ display: contents; }}
+    overflow: hidden; }}
+  .stage {{ position: absolute; left: 50%; top: 50%; width: max-content; box-sizing: border-box;
+    padding: 14px {_PANEL_PAD_PX}px 12px; transform-origin: 50% 50%; transform: translate(-50%, -50%) scale(var(--z, 1)); }}
+  .row {{ margin-bottom: 10px; }}
   .cell {{ display: flex; flex-direction: column; align-items: center; line-height: 1; }}
-  .label {{ font-size: min(5vw, 6vh); margin-bottom: 0.6vh; }}
+  .label {{ font-size: 24px; margin-bottom: 4px; }}
   .value {{ --scale: 1; --chars: 4; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap;
-    font-size: min(calc(var(--scale) * var(--unit)), calc({_PIP_LARGEST} * var(--unit)), calc(var(--room) / (var(--chars) * {_CHAR_EM}))); }}
-  .limit .value {{ font-size: min(7vw, 9vh); font-weight: 600; }}
-  .row[data-r="remaining"], .row[data-r="limit"] {{ margin-top: 3vh; }}
+    font-size: calc(var(--scale) * {_PANEL_UNIT_PX}px); }}
+  .limit .value {{ font-size: 54px; font-weight: 600; }}
+  .limit .label {{ font-size: 22px; }}
+  .row[data-r="remaining"], .row[data-r="limit"] {{ margin-top: 20px; }}
   {_SHARED_CSS}
-  .pair .cell + .cell {{ margin-left: calc(2 * min(5vw, 6vh)); }}
-  .modes {{ align-self: center; display: inline-flex; border: 1px solid var(--line); border-radius: 6px;
-    overflow: hidden; margin-top: 0.5vh; }}
-  .modes button {{ font: inherit; font-size: max(10px, min(3.4vw, 4.2vh)); color: var(--text);
-    background: transparent; border: 0; padding: 0.3vh 1.6vw; cursor: pointer; }}
+  .pair .cell + .cell {{ margin-left: 44px; }}
+  .modes {{ display: flex; width: max-content; margin: 4px auto 0; border: 1px solid var(--line); border-radius: 8px;
+    overflow: hidden; }}
+  .modes button {{ font: inherit; font-size: 14px; color: var(--text); background: transparent; border: 0;
+    padding: 4px 10px; cursor: pointer; }}
   .gone-note {{ display: none; font-size: max(14px, min(5vw, 7vh)); text-align: center; padding: 0 5vw; }}
-  body.gone .row, body.gone .modes {{ display: none; }}
+  body.gone {{ display: flex; flex-direction: column; justify-content: center; }}
+  body.gone .stage {{ display: none; }}
   body.gone .gone-note {{ display: block; }}
-  @media (min-aspect-ratio: {_PIP_WIDE}) {{
-    body {{ flex-direction: row; align-items: center; gap: 3vw; padding: 0 2vw; box-sizing: border-box; }}
-    .timers {{ display: flex; flex-direction: column; gap: 1vh; flex: 1 1 0; min-width: 0; container-type: inline-size;
-      --unit: {_PIP_WIDE_UNIT}; --room: 100cqw; }}
-    .side {{ display: flex; flex-direction: column; align-items: center; gap: 3vh; flex: none; }}
-    .side .row[data-r="limit"] {{ margin-top: 0; }}
-    .side .pair {{ flex-direction: column; gap: 3vh; container-type: normal; }}
-    .side .pair .cell {{ flex: none; margin-left: 0; }}
-    body.gone .timers, body.gone .side {{ display: none; }}
-  }}
 """
 
 _GONE_MS = 3000
@@ -490,6 +487,7 @@ const DARK = {json.dumps(DARK)};
 const LIGHT = {json.dumps(LIGHT)};
 const PIP_HTML = {json.dumps(_PIP_HTML)};
 const PIP_CSS = {json.dumps(_PIP_CSS)};
+const PIP_FILL = {_PIP_FILL};
 const WATCH_JS = {json.dumps(_WATCH_JS)};
 const POPUP_KEY = {json.dumps(POPUP_KEY)};
 const BUZZ_TEXT = {json.dumps(_BUZZ_TEXT)};
@@ -720,6 +718,40 @@ const hub = () => (window.speakerTime ??= {{
     }}
   }},
 
+  // The pop-out's copy of the panel scaled to fit its window (v1.11). Its
+  // zoom (pipZoom) follows the window, sized by hand or not; when the copy's
+  // own size changes (a slider, longer figures, the switch, the warning),
+  // the window is resized to show it at the zoom it had, which Chrome allows
+  // a pop-up always and a pop-out only just after a click or a key (else it
+  // throws, and the copy is scaled to the window it has).
+  fitPip(win, doc) {{
+    const stage = doc.querySelector(".stage");
+    if (stage === null || doc.body.classList.contains("gone")) return;
+    const natW = stage.offsetWidth, natH = stage.offsetHeight;
+    const W = win.innerWidth, H = win.innerHeight;
+    if (natW === 0 || natH === 0 || W === 0 || H === 0) return;
+    const fit = PIP_FILL * Math.min(W / natW, H / natH);
+    const key = natW + "x" + natH;
+    if (key !== this.pipNat) {{
+      const zoom = this.pipZoom ?? fit;
+      this.pipNat = key;
+      const dw = Math.ceil(natW * zoom / PIP_FILL) - W, dh = Math.ceil(natH * zoom / PIP_FILL) - H;
+      this.pipWant = [W + dw, H + dh];
+      if (Math.abs(dw) > 1 || Math.abs(dh) > 1) {{
+        try {{
+          win.resizeBy(dw, dh);
+          this.pipRefused = false;
+        }} catch (error) {{
+          this.pipRefused = true;  // a pop-out with no click or key just before
+        }}
+      }}
+    }} else {{
+      this.pipZoom = fit;
+    }}
+    const z = String(+fit.toFixed(4));
+    if (stage.style.getPropertyValue("--z") !== z) stage.style.setProperty("--z", z);
+  }},
+
   // The pop-out (popup false), or a plain pop-up (true): drawn and timed from
   // its own window, with its own switch, starting at the panel's choice. The
   // pop-out stays on top; a pop-up does not, and outlives its tab, so it has
@@ -728,6 +760,10 @@ const hub = () => (window.speakerTime ??= {{
   openPip(win, popup) {{
     const h = this;
     h.pipMode = h.pageMode;
+    h.pipNat = null;
+    h.pipZoom = null;
+    h.pipWant = null;
+    h.pipRefused = false;
     const doc = win.document;
     doc.title = "SpeakerTime";
     doc.head.querySelector("style[data-speakertime]")?.remove();
@@ -740,12 +776,14 @@ const hub = () => (window.speakerTime ??= {{
       button.addEventListener("click", () => {{
         h.pipMode = button.dataset.m;
         h.draw(doc, h.pipMode);
+        h.fitPip(win, doc);
       }});
     }}
     const tick = () => {{
       win.speakerTimeBeat = Date.now();
       doc.body.classList.remove("gone");
       h.draw(doc, h.pipMode);
+      h.fitPip(win, doc);
       const now = performance.now();
       if (h.kick !== null && now - h.lastSync > KICK_AFTER_MS && now - h.lastKick > KICK_AFTER_MS) {{
         h.lastKick = now;
@@ -775,27 +813,30 @@ const hub = () => (window.speakerTime ??= {{
 """
 
 _CLOCK_HTML = (
-    '<div class="clock">'
+    '<div class="scroll"><div class="clock">'
     + "".join(_row(name, name in SIZED) for name in ("elapsed", "remaining", "limit"))
     + f'<div class="tools">{_MODES_HTML}<button class="pop" type="button" hidden></button>'
     + f'<button class="buzzer" type="button" hidden>{_BUZZER_LABEL}</button></div>'
     + '<div class="why" hidden></div>'
     + '<div class="note" hidden></div>'
     + f'<div class="buzz-note" hidden>{_BUZZ_NOTE}</div>'
-    + "</div>"
+    + "</div></div>"
 )
 
+# The panel is as wide as its widest row (max-content), the figures' rows deciding it: the row of buttons and the
+# notes wrap within it (contain: inline-size). Each row's middle column takes the panel's width, so the sliders and
+# colour buttons of both timers stand in one column just beside the larger one's figures.
 _CLOCK_CSS = f"""
+.scroll {{ overflow-x: auto; overflow-y: hidden; }}
 .clock {{
   {_LOOK_CSS}
   border-radius: 14px; padding: 14px {_PANEL_PAD_PX}px 12px; box-shadow: inset 0 0 0 1px var(--line);
-  box-sizing: border-box; max-width: {_PANEL_FIGURES_PX + 2 * _PANEL_PAD_PX}px; margin: 0 auto;
+  box-sizing: border-box; width: max-content; min-width: min(100%, {_PANEL_MIN_PX}px); margin: 0 auto;
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 }}
-.clock.host {{ max-width: {_PANEL_FIGURES_PX + 2 * _PANEL_PAD_PX + 2 * _TOOLS_PX}px; }}
 .row {{ display: grid; grid-template-columns: minmax(0, 1fr); margin-bottom: 10px; }}
 .clock.host .row {{ grid-template-columns: {_TOOLS_PX}px minmax(0, 1fr) 30px 26px; }}
-.cell {{ grid-column: 1; container-type: inline-size; min-width: 0;
+.cell {{ grid-column: 1; min-width: 0;
   display: flex; flex-direction: column; align-items: center; line-height: 1; }}
 .pair {{ grid-column: 1; min-width: 0; }}
 .clock.host .row > .cell, .clock.host .pair {{ grid-column: 2; }}
@@ -806,15 +847,21 @@ _CLOCK_CSS = f"""
 .swatches button {{ width: 17px; height: 17px; padding: 0; border-radius: 50%; cursor: pointer;
   background: var(--swatch); border: 1px solid var(--line); }}
 .swatches button.on {{ outline: 2px solid var(--text); outline-offset: 2px; }}
-.label {{ font-size: clamp(14px, 4.6cqw, 24px); margin-bottom: 4px; }}
+.label {{ font-size: clamp(14px, 4.2vw, 24px); margin-bottom: 4px; }}
 .value {{ --scale: 1; --chars: 4; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap;
-  font-size: min(calc(var(--scale) * {_PANEL_UNIT}), calc(100cqw / (var(--chars) * {_CHAR_EM}))); }}
-.limit .value {{ font-size: clamp(22px, 7.6cqw, 54px); font-weight: 600; }}
-.limit .label {{ font-size: clamp(14px, 3.6cqw, 22px); }}
-.pair .cell + .cell {{ margin-left: clamp(28px, 7.2cqw, 44px); }}
+  font-size: calc(var(--scale) * {_PANEL_UNIT}); }}
+@media (max-width: {_PHONE_PX - 0.02}px) {{
+  .clock {{ --room: calc(100vw - 2rem - {2 * _PANEL_PAD_PX}px); max-width: 100%; }}
+  .clock.host {{ --room: calc(100vw - 2rem - {2 * _PANEL_PAD_PX + 2 * _TOOLS_PX}px); }}
+  .value {{ font-size: min(calc(var(--scale) * {_PANEL_UNIT}), calc(var(--room) / (var(--chars) * {_CHAR_EM}))); }}
+}}
+.limit .value {{ font-size: clamp(22px, 7vw, 54px); font-weight: 600; }}
+.limit .label {{ font-size: clamp(14px, 3.4vw, 22px); }}
+.pair .cell + .cell {{ margin-left: clamp(28px, 6.8vw, 44px); }}
 .row[data-r="remaining"], .row[data-r="limit"] {{ margin-top: 20px; }}
 {_SHARED_CSS}
-.tools {{ display: flex; justify-content: center; align-items: center; flex-wrap: wrap; gap: 8px 12px; margin-top: 4px; }}
+.tools {{ display: flex; justify-content: center; align-items: center; flex-wrap: wrap; gap: 8px 12px; margin-top: 4px;
+  contain: inline-size; }}
 .modes {{ display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }}
 .modes button {{ font: inherit; font-size: 14px; color: var(--text); background: transparent; border: 0;
   padding: 4px 10px; cursor: pointer; }}
@@ -825,9 +872,12 @@ _CLOCK_CSS = f"""
 .pop:hover {{ border-color: var(--text); }}
 .buzzer {{ border-color: var(--over); touch-action: none; user-select: none; -webkit-user-select: none; }}
 .buzzer.on {{ background: var(--over); color: var(--panel); }}
-.note, .why, .buzz-note {{ font-size: 13px; text-align: center; margin-top: 6px; }}
+.note, .why, .buzz-note {{ font-size: 13px; text-align: center; margin-top: 6px; contain: inline-size; }}
 """
 
+_START = "Start"
+_RESTART = "Restart"
+"""The Start button's label once the timer has run (Elapsed not zero), running or stopped: Start goes on from there."""
 _POP_OPEN = "Pop out (stays on top)"
 _POP_CLOSE = "Close the pop-out"
 _POPUP_OPEN = "Pop-up (may get obscured)"
@@ -1866,8 +1916,10 @@ def _host_controls(shown: Shown) -> None:
     with row:
         picker(key=_PICKER, data={"buttons": buttons, "chosen": chosen, "auto": AUTO}, on_pick_change=_warning_colour_picked)
     row = st.container(horizontal=True)
-    # A button that would do nothing is greyed (ratesplot's rule: grey what has no effect).
-    row.button("Start", on_click=_control, args=("start",), disabled=shown.running, type="primary")
+    # A button that would do nothing is greyed (ratesplot's rule: grey what has no effect). Start reads Restart once the
+    # timer has run, greyed or not (Terry, 2026-11-03), and Start again after Reset.
+    start = _RESTART if shown.running or shown.elapsed > 0 else _START
+    row.button(start, key=_START_BUTTON, on_click=_control, args=("start",), disabled=shown.running, type="primary")
     row.button("Stop", on_click=_control, args=("stop",), disabled=not shown.running)
     row.button("Reset", on_click=_control, args=("reset",), disabled=not shown.running and shown.elapsed == 0)
 

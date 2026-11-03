@@ -9,25 +9,31 @@ on the machine showing the slides). It runs in a browser; nothing to install.
 **The host**: leave the Session ID box blank (a random six-digit ID is chosen)
 or type one, and press **Create New Session**. Set the **Time Limit** in
 minutes, to one decimal place (2.5 is two and a half minutes), and use
-**Start**, **Stop** (a pause: Start resumes) and **Reset** (pressed while
-running, it stops the timer too). Time Remaining is the Time Limit minus
+**Start**, **Stop** (a pause) and **Reset** (pressed while running, it stops
+the timer too). Once the timer has run, Start reads **Restart**, greyed while
+running, and goes on from where it stopped; after Reset it reads Start
+again (v1.11). Time Remaining is the Time Limit minus
 Elapsed Time. It turns red and blinks when it reaches zero, and once the limit
 is passed it goes negative and its label reads **Overtime**, red and blinking
 too; with a blank, 0 or negative limit it stays at zero (and plain). The
 slider on the right of each timer sets its size on every viewer's panel and
-pop-out as well as the host's, from 25 to 800, starting at 200. The panel
-spans the browser window: at 800 its figures are twice as large as at 400,
-where the panel is wide enough (a little over 1,400 pixels for a time of
-five characters, "12:34"); on a narrower one they stop at its width. It
-grows no wider than a time of eight characters ("12:34:56") needs at 800,
-about 2,240 pixels (2,350 on the host's panel, with its sliders and colour
-buttons), and stands in the middle of a wider window. In a
-pop-out they stop at 400's size, which already fills its width. A wide, low
-pop-out (at least two and a half times as wide as it is high) puts the Time
-Limit and the switch beside the timers instead of under them, so the figures
-can take more of its height: at 400, three quarters of it (about half before
-v1.7), and every size about 1.4 times what it was. To make them larger still,
-make the pop-out's window larger. Longer figures ("1:02:03") shrink to fit.
+pop-out as well as the host's, from 25 to 800, starting at 200 (800 is four
+times 200's size). The panel is as wide as its figures need, not as the
+window (v1.11): the sliders and colour buttons stand just beside the larger
+timer, and the panel stands in the middle of the page. A panel wider than
+the window runs past its edge, with a scroll bar under it: make the window
+wider, or scroll. On a phone (a window under 640 pixels wide) the panel stays
+within the page and the figures shrink to fit it, as before.
+
+A **pop-out** (and a pop-up) shows the host's panel scaled as a whole to fit
+its window (v1.11): make the window larger or smaller by hand and everything
+in it grows or shrinks together, as a larger or smaller copy of what the host
+sees. When the sizes change (a slider, the switch, the Time Left Warning, a
+longer time), the window changes size to show them at the same scale, where
+the browser allows it. Chrome lets a page resize a pop-up at any time, but a
+pop-out only within a few seconds of a click or a key on the page, so the
+host's own pop-out follows the host's sliders, while a viewer's keeps its
+size and scales its contents to fit it instead.
 
 **Colours**: beside each slider, a column of colour buttons sets that
 timer's colour for everyone: white (the default), black, yellow, orange,

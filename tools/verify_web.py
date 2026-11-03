@@ -101,8 +101,19 @@ def main() -> int:
     check("warning rounded in its box, kept in the session", (a.number_input(key=web._WARN_BOX).value, REGISTRY.shown(sid).warning), (0.6, 0.6))
     button(a, "Start").click().run()
     labels = {b.label: b.disabled for b in a.button}
-    check("running: Stop and Reset", (labels["Start"], labels["Stop"], labels["Reset"]), (True, False, False))
+    check("running: Stop and Reset, Start greyed and reading Restart (v1.11)",
+          ("Start" in labels, labels["Restart"], labels["Stop"], labels["Reset"]), (False, True, False, False))
     check("running in the session", REGISTRY.shown(sid).running, True)
+    # v1.11 (Terry, 2026-11-03): Restart once the timer has run, greyed or not; Start again after Reset.
+    button(a, "Stop").click().run()
+    labels = {b.label: b.disabled for b in a.button}
+    check("stopped part way: Restart and Reset", ("Start" in labels, labels["Restart"], labels["Stop"], labels["Reset"]),
+          (False, False, True, False))
+    button(a, "Reset").click().run()
+    labels = {b.label: b.disabled for b in a.button}
+    check("reset: Start again", ("Restart" in labels, labels["Start"], labels["Stop"], labels["Reset"]), (False, False, True, True))
+    button(a, "Start").click().run()
+    check("started again: running", (REGISTRY.shown(sid).running, "Restart" in {b.label for b in a.button}), (True, True))
 
     # A second page: the ID taken; a viewer of it with the case and spaces changed.
     b = page(sent())
