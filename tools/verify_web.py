@@ -10,12 +10,20 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import sys
+import tempfile
 import urllib.parse
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
+# The checks' own file of remembered settings, never the app's (sessions.REMEMBER_FILE), holding one
+# session of an earlier run of the app (item 11).
+REMEMBERED = Path(tempfile.mkdtemp()) / "remembered.json"
+REMEMBERED.write_text(json.dumps({"LASTWEEK": {"limit": 7.5, "warning": 1.0, "colours": {"elapsed": "black", "remaining": "black"},
+                                               "theme": "light", "host_mode": "minutes"}}), encoding="utf-8")
+os.environ["SPEAKERTIME_REMEMBER"] = str(REMEMBERED)
 
 from streamlit.testing.v1 import AppTest  # noqa: E402
 
@@ -171,7 +179,18 @@ def main() -> int:
     t = page(sent(browser="browserT1", tabid="tabT1abcd"))
     check("the tab's id kept", t.session_state[web._TAB], "tabT1abcd")
 
-    for at_ in (a, b, b2, c, d, e, legacy, other, f, g, w, hst, t):
+    # A session of an earlier run of the app, created again: its settings back, and said so (Terry, 2026-11-01, item 11).
+    r = page(sent(browser="browserR1"))
+    r.text_input(key=web._BOX).input("lastweek").run()
+    button(r, "Create New Session").click().run()
+    shown = REGISTRY.shown("LASTWEEK")
+    check("an ID used in an earlier run: its settings back",
+          (r.number_input(key=web._LIMIT_BOX).value, r.number_input(key=web._WARN_BOX).value, shown.theme, shown.host_mode),
+          (7.5, 1.0, "light", "minutes"))
+    check("and said so", "starts from its settings of last time" in texts(r), True)
+    check("the file holds the sessions of this run too", sorted(json.loads(REMEMBERED.read_text(encoding="utf-8")))[:2], [sid, "LASTWEEK"])
+
+    for at_ in (a, b, b2, c, d, e, legacy, other, f, g, w, hst, t, r):
         check("no exception", [x.value for x in at_.exception], [])
 
     for failure in FAILURES:

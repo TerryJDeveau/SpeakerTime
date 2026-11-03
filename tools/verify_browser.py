@@ -18,9 +18,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -141,9 +143,11 @@ def free_port() -> int:
 
 def start_server() -> tuple[subprocess.Popen, str]:
     port = free_port()
+    # The checks' own file of remembered settings, never the app's (sessions.REMEMBER_FILE).
+    env = dict(os.environ, SPEAKERTIME_REMEMBER=str(Path(tempfile.mkdtemp()) / "remembered.json"))
     server = subprocess.Popen(
         [sys.executable, "-m", "streamlit", "run", "streamlit_app.py", "--server.port", str(port), "--server.headless", "true"],
-        cwd=ROOT, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        cwd=ROOT, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )
     url = f"http://localhost:{port}/"
     for _ in range(60):

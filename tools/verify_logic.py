@@ -7,7 +7,11 @@ checked to the second. Prints each failure and a count; exits 1 on any.
 
 from __future__ import annotations
 
+import contextlib
+import io
+import json
 import sys
+import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -15,7 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from speakertime import colours, ids  # noqa: E402
 from speakertime.colours import BLACK, DARK, LIGHT, WHITE  # noqa: E402
 from speakertime.sessions import (  # noqa: E402
-    EXPIRE_AFTER_S, HOST, HOST_GRACE_S, SIZE_DEFAULT, SIZE_MAX, SIZE_MIN, VIEWER, Refused, Registry,
+    EXPIRE_AFTER_S, HOST, HOST_GRACE_S, SIZE_DEFAULT, SIZE_MAX, SIZE_MIN, VIEWER, Refused, Registry, Settings,
 )
 from speakertime.timer import (  # noqa: E402
     CLOCK, MINUTES, Timer, clock_text, elapsed_shown, elapsed_tenths, limit_minutes, limit_seconds, minutes_text,
@@ -417,6 +421,52 @@ def colour_checks() -> None:
           (shown.warning_colour, shown.for_script()["look"]["warning"]), (colours.AUTO, colours.complement(colours.CLOCK_COLOURS["yellow"])))
 
 
+def remember_checks() -> None:
+    """A session's settings kept once it has gone, and in the store between runs (Terry, 2026-11-01, item 11)."""
+    store = Path(tempfile.mkdtemp()) / "remembered.json"
+    clock = Clock()
+    on = {"H"}
+    reg = Registry(clock=clock, connected=lambda page: page in on, store=store)
+    reg.create("KEEP", "H", None, MINUTES)
+    reg.control("KEEP", "H", "limit", 12.5)
+    reg.control("KEEP", "H", "warning", 2)
+    reg.set_size("KEEP", "H", "remaining", 250)
+    reg.set_colour("KEEP", "H", "remaining", "yellow")
+    reg.set_warning_colour("KEEP", "H", "cyan")
+    reg.control("KEEP", "H", "start")
+    clock.step(30)
+    # Everyone leaves; the session is removed EXPIRE_AFTER_S later (any create or join removes the expired).
+    reg.leave("KEEP", "H")
+    on.clear()
+    clock.step(EXPIRE_AFTER_S + 60)
+    reg.create("OTHER", "X")
+    check("the session gone", reg.exists("KEEP"), False)
+    on.add("H2")
+    _, _, notice = reg.create("KEEP", "H2", None, CLOCK)
+    shown = reg.shown("KEEP")
+    check("created again: its settings back (its way of showing the times too), its timer at zero",
+          (shown.limit, shown.warning, shown.sizes["remaining"], shown.colours["remaining"], shown.warning_colour, shown.host_mode,
+           shown.elapsed, shown.running, notice is not None),
+          (12.5, 2.0, 250, "yellow", "cyan", MINUTES, 0.0, False, True))
+    # A new run of the app: the settings read from the store.
+    again = Registry(clock=Clock(), store=store)
+    again.create("KEEP", "P")
+    check("a new run: the settings from the file", (again.shown("KEEP").limit, again.shown("KEEP").colours["remaining"]), (12.5, "yellow"))
+    _, _, notice = again.create("FRESH", "P2")
+    check("an ID never used: the defaults, no notice", (again.shown("FRESH").limit, notice), (None, None))
+    check("a random ID is never one used before", again.create(None, "P3")[0] not in ("KEEP", "FRESH"), True)
+    # A spoilt file: said so, and nothing remembered; spoilt values left at their defaults, a spoilt ID dropped.
+    store.write_text("{not json", encoding="utf-8")
+    said = io.StringIO()
+    with contextlib.redirect_stderr(said):
+        spoilt = Registry(clock=Clock(), store=store)
+    check("a spoilt file: a warning, nothing remembered", ("Warning:" in said.getvalue(), spoilt.remembered("KEEP")), (True, None))
+    store.write_text(json.dumps({"KEEP": {"limit": "lots", "sizes": {"elapsed": 9999}, "colours": {"remaining": "red"}, "theme": "pink"},
+                                 "bad id!": {}}), encoding="utf-8")
+    partial = Registry(clock=Clock(), store=store)
+    check("spoilt values at their defaults, a spoilt ID dropped", (partial.remembered("KEEP"), partial.remembered("bad id!")), (Settings(), None))
+
+
 def main() -> int:
     timer_checks()
     id_checks()
@@ -424,6 +474,7 @@ def main() -> int:
     display_checks()
     tab_checks()
     colour_checks()
+    remember_checks()
     for failure in FAILURES:
         print("FAIL", failure)
     print(f"{COUNT - len(FAILURES)} of {COUNT} checks passed")

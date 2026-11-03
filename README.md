@@ -63,6 +63,14 @@ host and a viewer of the same session can be two tabs of one browser (handy
 for trying it out): only the host's own tab is the host again after a reload.
 **Leave Session** forgets the session.
 
+**A session used before**: a session nobody has open goes six hours later
+(or when the app restarts), but its settings are kept: **Create New
+Session** under its ID later starts from its Time Limit, Time Left Warning,
+sizes, colours and way of showing the times, and says so. They are kept in
+`remembered_sessions.json` beside the program (the last 500 sessions). On
+Streamlit Community Cloud, whether that file outlives a reboot or a sleep
+has not been checked yet.
+
 ## Its own window, kept on top
 
 A web page cannot make itself open in a window of its own, but the browser can:
