@@ -134,6 +134,7 @@ _MARK = "mark"            # the page's own part of its id (_page)
 _MODE = "mode"            # this panel's way of showing the times (timer.MODES); None before it has shown a session
 _EPOCH = "epoch"          # the session's host_epoch when this panel last took the host's way
 _CLOCK = "clock"          # the clock element: its triggers, "mode" (the switch) and "size" (a slider)
+_LOST = "lost"            # the check-in's script found the clock gone from the page: lay the page out again
 
 # The clock's look. A dark panel with light figures reads well from a lectern
 # and in a small window beside the slides. Remaining turns red, and blinks,
@@ -255,6 +256,8 @@ const hub = () => (window.speakerTime ??= {{
   lastSync: 0,      // when a check-in last arrived
   lastKick: 0,      // when the pop-out last asked for one
   kick: null,       // asks for a check-in (the latest sync element's trigger)
+  clock: null,      // the panel's clock (the .clock element) as last laid out
+  missing: 0,       // check-ins running that found it gone from the page (_SYNC_JS)
   pip: null,        // the pop-out window, while open
   opening: false,   // a pop-out asked for and not yet given
   pipOpenedAt: -Infinity,  // when the pop-out last opened (performance.now())
@@ -412,6 +415,17 @@ _CLOCK_CSS = f"""
 _POP_OPEN = "Pop out (stays on top)"
 _POP_CLOSE = "Close the pop-out"
 
+_LOST_AFTER = 2
+"""Check-ins running that find the clock gone from the page before the page is asked for again (Streamlit's whole run).
+
+Measured 2026-11-03 (Chrome on Buddug, verify_browser, the same with
+v1.1's code): a whole run of the host's page, as a slider let go makes,
+sometimes left the clock out of the page for good, everything else laid
+out and nothing in the console, and the check-ins (a fragment's runs) never
+lay it out again. Two, not one: the clock is missing for a moment while a
+whole run lays it out again, and that is not a loss.
+"""
+
 _POP_GUARD_MS = 1000
 """A click on the pop-out's button this soon after the pop-out opened is ignored: a double click would close it at once.
 
@@ -450,6 +464,7 @@ export default function (component) {{
   h.pageMode = data.mode;
   h.preview = {{}};  // the sizes laid out with this element are the server's
   const root = parentElement.querySelector(".clock");
+  h.clock = root;
   root.classList.toggle("host", data.host);
   const pop = root.querySelector(".pop");
   const note = root.querySelector(".note");
@@ -517,16 +532,24 @@ export default function (component) {{
 )
 
 # The check-in's reading for the clock, from inside the fragment (rebuilt at
-# each check-in). It also leaves the pop-out a way to ask for a check-in.
+# each check-in). It also leaves the pop-out a way to ask for a check-in, and
+# asks for the whole page again when the clock has gone from it (_LOST_AFTER).
 _SYNC_JS = (
     _HUB_JS
-    + """
-export default function (component) {
-  const { data, setTriggerValue } = component;
+    + f"""
+const LOST_AFTER = {_LOST_AFTER};
+
+export default function (component) {{
+  const {{ data, setTriggerValue }} = component;
   const h = hub();
   h.update(data);
   h.kick = () => setTriggerValue("tick", Date.now());
-}
+  h.missing = h.clock !== null && h.clock.isConnected ? 0 : h.missing + 1;
+  if (h.missing >= LOST_AFTER) {{
+    h.missing = 0;
+    setTriggerValue("lost", Date.now());
+  }}
+}}
 """
 )
 
@@ -1015,6 +1038,11 @@ def _ticked() -> None:
     """The pop-out asked for a check-in: the fragment's run is the check-in."""
 
 
+def _clock_lost() -> None:
+    """The check-in's script has found the clock gone from the page (``_LOST_AFTER``): the fragment's run lays the whole page out again."""
+    st.session_state[_LOST] = True
+
+
 # -- the screens ------------------------------------------------------------------
 
 def _start_screen() -> None:
@@ -1090,9 +1118,10 @@ def _live(sid: str, role: str) -> None:
     the whole page out again.
     """
     state = st.session_state
-    if state.get(_SCREEN) != role or state.get(_SID) != sid:
-        # A button in this fragment (Yes) has changed the screen: its click
-        # reran the fragment alone, so the page is laid out again here.
+    if state.get(_SCREEN) != role or state.get(_SID) != sid or state.pop(_LOST, False):
+        # A button in this fragment (Yes) has changed the screen, or the clock
+        # has gone from the page: the click reran the fragment alone, so the
+        # page is laid out again here.
         st.rerun(scope="app")
     checked = _check_in(sid)
     if checked is None:
@@ -1114,7 +1143,8 @@ def _live(sid: str, role: str) -> None:
     # must see every check-in arrive to know when to ask for one.
     state[_BEAT] = state.get(_BEAT, 0) + 1
     sync = st.components.v2.component("speakertime_sync", js=_SYNC_JS)
-    sync(key="sync", data={"sid": sid, "beat": state[_BEAT], **checked.shown.for_script()}, on_tick_change=_ticked)
+    sync(key="sync", data={"sid": sid, "beat": state[_BEAT], **checked.shown.for_script()}, on_tick_change=_ticked,
+         on_lost_change=_clock_lost)
     shown = checked.shown
     if role == HOST:
         viewers = "1 viewer" if shown.viewers == 1 else f"{shown.viewers} viewers"
