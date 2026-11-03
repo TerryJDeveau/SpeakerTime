@@ -77,6 +77,7 @@ from __future__ import annotations
 import datetime
 import hashlib
 import json
+import math
 import re
 import urllib.parse
 import uuid
@@ -206,12 +207,26 @@ _CHAR_EM = 0.62
 # bound now the timers' column (cqw). Below that ratio the side column
 # would cost the figures more width than it gives them height (measured
 # by hand: about even at 5:2 with the Time Left Warning shown).
-_PANEL_UNIT = "clamp(8px, 8cqw, 56px)"
+_PANEL_UNIT_PX = 56
+_PANEL_UNIT = f"clamp(8px, 8cqw, {_PANEL_UNIT_PX}px)"
 _PIP_UNIT = "min(7.7vw, 13.5vh)"
 _PIP_WIDE_UNIT = "min(7.7cqw, 18.75vh)"
 _PIP_WIDE = "5/2"
 _PIP_LARGEST = 4
 """A pop-out's figures stop at this many units (400 on the slider): larger would leave its window (Terry, 2026-11-03)."""
+
+# v1.8 (Terry, 2026-11-03): the panel grows with the window only as far as
+# the figures need, "HH:MM:SS" (an hour of two digits at the most) at the
+# slider's largest, 800: eight characters at 0.62 em, eight units of 56 px,
+# 2223 px for the figures' column; then the panel's padding and, on the
+# host's panel, the columns of the sliders and colour buttons. A wider
+# window centres it.
+_WIDEST_TEXT = "12:34:56"
+_PANEL_FIGURES_PX = math.ceil(len(_WIDEST_TEXT) * _CHAR_EM * SIZE_MAX / 100 * _PANEL_UNIT_PX)
+_PANEL_PAD_PX = 8
+"""The panel's padding at the left and at the right."""
+_TOOLS_PX = 56
+"""On the host's panel, the slider's column (30 px) and the colour buttons' (26 px) beside each timer; as much again at the left keeps the figures centred."""
 
 _DRAW_MS = 100
 """The clock is drawn every 100 ms: a second's change shows within a tenth of a second."""
@@ -653,11 +668,13 @@ _CLOCK_HTML = (
 _CLOCK_CSS = f"""
 .clock {{
   {_LOOK_CSS}
-  border-radius: 14px; padding: 14px 8px 12px; box-shadow: inset 0 0 0 1px var(--line);
+  border-radius: 14px; padding: 14px {_PANEL_PAD_PX}px 12px; box-shadow: inset 0 0 0 1px var(--line);
+  box-sizing: border-box; max-width: {_PANEL_FIGURES_PX + 2 * _PANEL_PAD_PX}px; margin: 0 auto;
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 }}
+.clock.host {{ max-width: {_PANEL_FIGURES_PX + 2 * _PANEL_PAD_PX + 2 * _TOOLS_PX}px; }}
 .row {{ display: grid; grid-template-columns: minmax(0, 1fr); margin-bottom: 10px; }}
-.clock.host .row {{ grid-template-columns: 56px minmax(0, 1fr) 30px 26px; }}
+.clock.host .row {{ grid-template-columns: {_TOOLS_PX}px minmax(0, 1fr) 30px 26px; }}
 .cell {{ grid-column: 1; container-type: inline-size; min-width: 0;
   display: flex; flex-direction: column; align-items: center; line-height: 1; }}
 .pair {{ grid-column: 1; min-width: 0; }}
