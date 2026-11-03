@@ -371,24 +371,32 @@ def sizes_and_modes(a: Page, b: Page, c: Page, pip: Page) -> None:
 
     On entry C hosts TALK1 with its pop-out open, A views it, B is on the start screen.
     """
-    # 12. Sizes: the host's alone; Elapsed set to 50 % halves it on a viewer's panel and in the pop-out, Remaining kept.
+    # 12. Sizes: the host's alone; Elapsed set to 100 (half the default 200) halves it on a viewer's panel and in the
+    # pop-out, Remaining kept; Remaining at 300 and 400 grows by each step: the whole range takes effect (Terry, 2026-11-03).
     ok("the host has a slider beside each timer", on_clock(c, _SLIDERS) == ["elapsed", "remaining"], on_clock(c, _SLIDERS))
     ok("a viewer has none", on_clock(a, _SLIDERS) == [], on_clock(a, _SLIDERS))
-    maxima = on_clock(c, f"() => [...{_CLOCK_ROOT}.querySelectorAll('input.size')].map(s => s.max)")
-    ok("the sliders go to four times (Terry, 2026-11-01: twice the 200 %)", maxima == ["400", "400"], maxima)
+    maxima = on_clock(c, f"() => [...{_CLOCK_ROOT}.querySelectorAll('input.size')].map(s => [s.value, s.max])")
+    ok("the sliders start half way and go to 400", maxima == [["200", "400"], ["200", "400"]], maxima)
     before, pip_before = on_clock(a, _PANEL), pip.evaluate(_POPOUT)
-    on_clock(c, _SLIDE, ["elapsed", 50])
+    on_clock(c, _SLIDE, ["elapsed", 100])
     c.wait_for_timeout(2500)
     after, pip_after = on_clock(a, _PANEL), pip.evaluate(_POPOUT)
     ratio = after["elapsedPx"] / before["elapsedPx"]
-    ok("Elapsed at 50 % on a viewer's panel, Remaining kept", 0.48 <= ratio <= 0.52 and after["remainingPx"] == before["remainingPx"],
+    ok("Elapsed at 100 on a viewer's panel: half, Remaining kept", 0.48 <= ratio <= 0.52 and after["remainingPx"] == before["remainingPx"],
        [before, after])
     pip_ratio = pip_after["elapsedPx"] / pip_before["elapsedPx"]
     ok("and in the pop-out", 0.48 <= pip_ratio <= 0.52, [pip_before, pip_after])
-    on_clock(c, _SLIDE, ["remaining", 150])
+    on_clock(c, _SLIDE, ["remaining", 300])
     c.wait_for_timeout(2500)
-    ok("Remaining at 150 % on a viewer's panel",
-       1.3 <= on_clock(a, _PANEL)["remainingPx"] / before["remainingPx"] <= 1.52, [before, on_clock(a, _PANEL)])
+    at_300, pip_300 = on_clock(a, _PANEL), pip.evaluate(_POPOUT)
+    ok("Remaining at 300 on a viewer's panel: half as large again", 1.46 <= at_300["remainingPx"] / before["remainingPx"] <= 1.54,
+       [before, at_300])
+    on_clock(c, _SLIDE, ["remaining", 400])
+    c.wait_for_timeout(2500)
+    at_400, pip_400 = on_clock(a, _PANEL), pip.evaluate(_POPOUT)
+    ok("Remaining at 400: a third larger again, on a viewer's panel and in the pop-out (not stopped short)",
+       1.30 <= at_400["remainingPx"] / at_300["remainingPx"] <= 1.36 and 1.30 <= pip_400["remainingPx"] / pip_300["remainingPx"] <= 1.36,
+       [at_300, at_400, pip_300, pip_400])
 
     # 13. Ways of showing the times. The host's switch changes its own panel only, and not its pop-out.
     ok("all start at H:MM:SS", (mode_of(c), mode_of(a), pip.evaluate(_POPOUT)["mode"]) == ("clock", "clock", "clock"))
@@ -418,7 +426,7 @@ def sizes_and_modes(a: Page, b: Page, c: Page, pip: Page) -> None:
     c.get_by_text("You are the host.").wait_for(timeout=8000)
     after_reload = [settled(lambda: mode_of(p_), "clock", 4.0) for p_ in (a, b)]
     ok("a host connecting: every viewer takes the host's way", after_reload == ["clock", "clock"], after_reload)
-    ok("the reloaded host's sizes kept", on_clock(c, f"() => [...{_CLOCK_ROOT}.querySelectorAll('input.size')].map(s => s.value)") == ["50", "150"])
+    ok("the reloaded host's sizes kept", on_clock(c, f"() => [...{_CLOCK_ROOT}.querySelectorAll('input.size')].map(s => s.value)") == ["100", "400"])
     # A viewer's pop-out starts at its panel's way.
     on_clock(a, _SWITCH, "minutes")
     a.wait_for_timeout(1200)

@@ -166,6 +166,19 @@ _BLINK_S = 1.0
 _CHAR_EM = 0.62
 """The width of a character of the figures, in em, a little over a digit's (0.55 to 0.6 in the system fonts, tabular): the figures shrink to fit their column."""
 
+# The figures' size at 100 % of the host's slider: a quarter of the largest
+# that fit (sessions.SIZE_MAX is 400), so the slider's whole range takes
+# effect (Terry, 2026-11-03). Five characters ("12:34", "−0:05", "125.0":
+# a talk of ten minutes or more shows five) at 0.62 em fill a column of
+# 100 cqw at 32.3 cqw; a quarter of that is 8 cqw. Measured first with four
+# (10 cqw): a 12.5-minute limit's "12:30" stopped at 320. The pop-out's
+# figures are bounded by its width (96 vw: 31 vw for five characters, so
+# 7.7 vw) and, in a wide and low pop-out, by its height: 54 vh at the most,
+# leaving the rest for the labels, the other timer and the Time Limit.
+# Longer figures ("1:02:03") still shrink to fit near the top of the range.
+_PANEL_UNIT = "max(8px, 8cqw)"
+_PIP_UNIT = "min(7.7vw, 13.5vh)"
+
 _DRAW_MS = 100
 """The clock is drawn every 100 ms: a second's change shows within a tenth of a second."""
 
@@ -257,7 +270,7 @@ _PIP_CSS = f"""
   .cell {{ display: flex; flex-direction: column; align-items: center; line-height: 1; }}
   .label {{ font-size: min(5vw, 6vh); margin-bottom: 0.6vh; }}
   .value {{ --scale: 1; --chars: 4; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap;
-    font-size: min(calc(var(--scale) * min(19vw, 27vh)), calc(96vw / (var(--chars) * {_CHAR_EM}))); }}
+    font-size: min(calc(var(--scale) * {_PIP_UNIT}), calc(96vw / (var(--chars) * {_CHAR_EM}))); }}
   .limit .value {{ font-size: min(7vw, 9vh); font-weight: 600; }}
   .row[data-r="remaining"], .row[data-r="limit"] {{ margin-top: 3vh; }}
   {_SHARED_CSS}
@@ -486,7 +499,7 @@ _CLOCK_CSS = f"""
 .swatches button.on {{ outline: 2px solid var(--text); outline-offset: 2px; }}
 .label {{ font-size: clamp(14px, 4.6cqw, 24px); margin-bottom: 4px; }}
 .value {{ --scale: 1; --chars: 4; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap;
-  font-size: min(calc(var(--scale) * clamp(40px, 21cqw, 150px)), calc(100cqw / (var(--chars) * {_CHAR_EM}))); }}
+  font-size: min(calc(var(--scale) * {_PANEL_UNIT}), calc(100cqw / (var(--chars) * {_CHAR_EM}))); }}
 .limit .value {{ font-size: clamp(22px, 7.6cqw, 54px); font-weight: 600; }}
 .limit .label {{ font-size: clamp(14px, 3.6cqw, 22px); }}
 .row[data-r="remaining"], .row[data-r="limit"] {{ margin-top: 20px; }}
