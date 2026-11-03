@@ -136,10 +136,16 @@ _EPOCH = "epoch"          # the session's host_epoch when this panel last took t
 _CLOCK = "clock"          # the clock element: its triggers, "mode" (the switch) and "size" (a slider)
 
 # The clock's look. A dark panel with light figures reads well from a lectern
-# and in a small window beside the slides. Remaining turns red once the limit
-# is passed (negative). The figures are sized by their column's width (cqw: a
-# hundredth of it) times the host's size, and never wider than the column.
-_CLOCK_COLOURS = {"panel": "#111418", "figures": "#f4f6f8", "labels": "#aab2bd", "over": "#ff5a4f", "slider": "#e2483d"}
+# and in a small window beside the slides. Remaining turns red, and blinks,
+# once it shows zero or less, and its label reads "Overtime" while it is
+# negative (Terry, 2026-11-01). The figures are sized by their column's width
+# (cqw: a hundredth of it) times the host's size, and never wider than the
+# column. The size slider's filled (lower) part is a light red (Terry,
+# 2026-11-01: lighter than the red it had, #e2483d).
+_CLOCK_COLOURS = {"panel": "#111418", "figures": "#f4f6f8", "labels": "#aab2bd", "over": "#ff5a4f", "slider": "#f28b82"}
+
+_BLINK_S = 1.0
+"""Remaining's figures and the Overtime label blink once a second: shown for half of it, faint for the other half."""
 
 _CHAR_EM = 0.62
 """The width of a character of the figures, in em, a little over a digit's (0.55 to 0.6 in the system fonts, tabular): the figures shrink to fit their column."""
@@ -163,9 +169,11 @@ _MODE_NAMES = {CLOCK: "H:MM:SS", MINUTES: "MMM.M"}
 """The switch's two buttons (Terry's names for the two ways)."""
 
 _LABELS = {
-    CLOCK: {"elapsed": "Elapsed Time", "remaining": "Time Remaining", "limit": "Time Limit"},
-    MINUTES: {"elapsed": "Elapsed Time (min)", "remaining": "Time Remaining (min)", "limit": "Time Limit (min)"},
+    CLOCK: {"elapsed": "Elapsed Time", "remaining": "Time Remaining", "limit": "Time Limit", "overtime": "Overtime"},
+    MINUTES: {"elapsed": "Elapsed Time (min)", "remaining": "Time Remaining (min)", "limit": "Time Limit (min)",
+              "overtime": "Overtime (min)"},
 }
+"""The labels of the three rows in each way of showing the times; "overtime" is Remaining's while it is negative."""
 
 _MODES_HTML = '<div class="modes" role="group" aria-label="Show the times as">' + "".join(
     f'<button type="button" data-m="{mode}">{name}</button>' for mode, name in _MODE_NAMES.items()
@@ -181,7 +189,7 @@ def _row(name: str, slider: bool) -> str:
         if slider else ""
     )
     return (
-        f'<div class="row {kind}"><div class="cell"><span class="label" data-l="{name}"></span>'
+        f'<div class="row {kind}" data-r="{name}"><div class="cell"><span class="label" data-l="{name}"></span>'
         f'<span class="value" data-v="{name}"></span></div>{size}</div>'
     )
 
@@ -197,7 +205,10 @@ _PIP_CSS = f"""
   .value {{ --scale: 1; --chars: 4; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap;
     font-size: min(calc(var(--scale) * min(19vw, 27vh)), calc(96vw / (var(--chars) * {_CHAR_EM}))); }}
   .limit .value {{ font-size: min(7vw, 9vh); font-weight: 600; }}
+  .row[data-r="remaining"], .row[data-r="limit"] {{ margin-top: 3vh; }}
   .over {{ color: {_CLOCK_COLOURS["over"]}; }}
+  .blink {{ animation: speakertime-blink {_BLINK_S}s steps(1, end) infinite; }}
+  @keyframes speakertime-blink {{ 50% {{ opacity: 0.15; }} }}
   .modes {{ align-self: center; display: inline-flex; border: 1px solid {_CLOCK_COLOURS["labels"]}; border-radius: 6px;
     overflow: hidden; margin-top: 0.5vh; }}
   .modes button {{ font: inherit; font-size: max(10px, min(3.4vw, 4.2vh)); color: {_CLOCK_COLOURS["labels"]};
@@ -270,6 +281,10 @@ const hub = () => (window.speakerTime ??= {{
   // The three texts now, as timer.elapsed_shown and remaining_shown (CLOCK),
   // or elapsed_tenths and remaining_tenths (MINUTES). The limit is a whole
   // number of tenths of a minute (6 s each), so the two still add up to it.
+  // "out": Remaining shows zero or less, with a limit set (red, blinking);
+  // "over": it shows less than zero (its label "Overtime" too). Both go by
+  // the figures as shown, so MMM.M is out from "0.0" (Terry, 2026-11-01:
+  // "when the display is zero").
   texts(mode) {{
     const b = this.base;
     if (b === null) return null;
@@ -280,11 +295,11 @@ const hub = () => (window.speakerTime ??= {{
       const limit = b.limit === null ? null : Math.round(b.limit / 6);
       const remaining = limit === null ? 0 : limit - tenths;
       return {{ elapsed: minutes(tenths), remaining: minutes(remaining), over: remaining < 0,
-               limit: limit === null ? "none" : minutes(limit) }};
+               out: limit !== null && remaining <= 0, limit: limit === null ? "none" : minutes(limit) }};
     }}
     const remaining = b.limit === null ? 0 : b.limit - shown;
     return {{ elapsed: clock(shown), remaining: clock(remaining), over: remaining < 0,
-             limit: b.limit === null ? "none" : clock(b.limit) }};
+             out: b.limit !== null && remaining <= 0, limit: b.limit === null ? "none" : clock(b.limit) }};
   }},
 
   // Draw the texts, labels and sizes into a panel or the pop-out.
@@ -294,7 +309,13 @@ const hub = () => (window.speakerTime ??= {{
     for (const name of ["elapsed", "remaining", "limit"]) {{
       const value = root.querySelector('[data-v="' + name + '"]');
       const label = root.querySelector('[data-l="' + name + '"]');
-      if (label !== null && label.textContent !== LABELS[mode][name]) label.textContent = LABELS[mode][name];
+      if (label !== null) {{
+        const overtime = name === "remaining" && t.over;
+        const text = LABELS[mode][overtime ? "overtime" : name];
+        if (label.textContent !== text) label.textContent = text;
+        label.classList.toggle("over", overtime);
+        label.classList.toggle("blink", overtime);
+      }}
       if (value === null) continue;
       if (value.textContent !== t[name]) {{
         value.textContent = t[name];
@@ -304,7 +325,10 @@ const hub = () => (window.speakerTime ??= {{
         const scale = String((this.preview[name] ?? this.base.sizes[name] ?? SIZE_DEFAULT) / 100);
         if (value.style.getPropertyValue("--scale") !== scale) value.style.setProperty("--scale", scale);
       }}
-      if (name === "remaining") value.classList.toggle("over", t.over);
+      if (name === "remaining") {{
+        value.classList.toggle("over", t.out);
+        value.classList.toggle("blink", t.out);
+      }}
     }}
     for (const button of root.querySelectorAll(".modes button")) button.classList.toggle("on", button.dataset.m === mode);
   }},
@@ -368,7 +392,10 @@ _CLOCK_CSS = f"""
 .value {{ --scale: 1; --chars: 4; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap;
   font-size: min(calc(var(--scale) * clamp(40px, 21cqw, 150px)), calc(100cqw / (var(--chars) * {_CHAR_EM}))); }}
 .limit .value {{ font-size: clamp(22px, 7.6cqw, 54px); font-weight: 600; }}
+.row[data-r="remaining"], .row[data-r="limit"] {{ margin-top: 20px; }}
 .over {{ color: {_CLOCK_COLOURS["over"]}; }}
+.blink {{ animation: speakertime-blink {_BLINK_S}s steps(1, end) infinite; }}
+@keyframes speakertime-blink {{ 50% {{ opacity: 0.15; }} }}
 .tools {{ display: flex; justify-content: center; align-items: center; flex-wrap: wrap; gap: 8px 12px; margin-top: 4px; }}
 .modes {{ display: inline-flex; border: 1px solid {_CLOCK_COLOURS["labels"]}; border-radius: 8px; overflow: hidden; }}
 .modes button {{ font: inherit; font-size: 14px; color: {_CLOCK_COLOURS["labels"]}; background: transparent; border: 0;

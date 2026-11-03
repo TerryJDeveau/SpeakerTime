@@ -72,8 +72,14 @@ VIEWER = "viewer"
 SIZED = ("elapsed", "remaining")
 """The timers whose size the host sets (the Time Limit's figures keep theirs)."""
 
-SIZE_MIN, SIZE_MAX, SIZE_STEP, SIZE_DEFAULT = 25, 200, 5, 100
-"""A timer's size, in percent of the figures' own size on each panel or pop-out (which follows its width): a quarter to double."""
+SIZE_MIN, SIZE_MAX, SIZE_STEP, SIZE_DEFAULT = 25, 400, 5, 100
+"""A timer's size, in percent of the figures' own size on each panel or pop-out (which follows its width): a quarter to four times.
+
+The most was 200 until Terry asked for twice it (2026-11-01). The figures
+still never grow wider than their column (``web``), so where the width
+already limits them a larger setting shows no larger: in a wide, low pop-out
+the height limits them first, and there they grow up to four times.
+"""
 
 
 class Refused(Exception):

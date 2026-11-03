@@ -39,9 +39,18 @@ _CLOCK_TEXTS = """() => {
   if (!host) return null;
   const r = host.shadowRoot;
   const t = (n) => r.querySelector('[data-v="' + n + '"]').textContent;
-  return { elapsed: t('elapsed'), remaining: t('remaining'), limit: t('limit'),
-           over: r.querySelector('[data-v="remaining"]').classList.contains('over') };
+  const value = r.querySelector('[data-v="remaining"]');
+  return { elapsed: t('elapsed'), remaining: t('remaining'), limit: t('limit'), over: value.classList.contains('over'),
+           blink: value.classList.contains('blink'), label: r.querySelector('[data-l="remaining"]').textContent };
 }"""
+
+# The clock's own rules (web._HUB_JS, texts) at a reading set by hand: [elapsed s, limit s or null, mode] each.
+_TEXTS_AT = """(cases) => cases.map(([elapsed, limit, mode]) => {
+  const h = Object.create(window.speakerTime);
+  h.base = { sid: 'x', elapsed, running: false, limit, version: 0, sizes: {}, at: performance.now() };
+  const t = h.texts(mode);
+  return [t.remaining, t.out, t.over];
+})"""
 
 _CLICK_POP = """() => [...document.querySelectorAll('*')].find(e => e.shadowRoot && e.shadowRoot.querySelector('.clock'))
   .shadowRoot.querySelector('.pop').click()"""
@@ -218,10 +227,18 @@ def run(url: str, launch: dict, shots: Path | None) -> None:
         a.wait_for_timeout(3300)
         texts = [clock(a), clock(b), clock(c)]
         ok("3 s in: all agree", texts[0]["elapsed"] == "0:03" and texts[0] == texts[1] == texts[2], texts)
+        ok("3 s in: Time Remaining, plain", (texts[0]["label"], texts[0]["over"], texts[0]["blink"]) == ("Time Remaining", False, False))
         a.wait_for_timeout(4000)
         texts = [clock(a), clock(b), clock(c)]
-        ok("past the limit: negative and red everywhere",
-           all(t["remaining"].startswith("−") and t["over"] for t in texts) and texts[0] == texts[1] == texts[2], texts)
+        ok("past the limit: negative, red and blinking everywhere, the label Overtime",
+           all(t["remaining"].startswith("−") and t["over"] and t["blink"] and t["label"] == "Overtime" for t in texts)
+           and texts[0] == texts[1] == texts[2], texts)
+        # Zero and below by the figures as shown (Terry, 2026-11-01: red and blinking at zero, Overtime only below it).
+        rules = a.evaluate(_TEXTS_AT, [[5.5, 6, "clock"], [6.2, 6, "clock"], [7, 6, "clock"], [5, 6, "minutes"],
+                                       [6, 6, "minutes"], [11.9, 6, "minutes"], [12, 6, "minutes"], [100, None, "clock"]])
+        ok("out at zero, over below it, in both ways; never out with no limit", rules == [
+            ["0:01", False, False], ["0:00", True, False], ["−0:01", True, True], ["0.1", False, False],
+            ["0.0", True, False], ["0.0", True, False], ["−0.1", True, True], ["0:00", False, False]], rules)
         shot(a, "3-host.png")
         shot(b, "4-viewer.png")
         limit_box(a).fill("2.25")
@@ -351,6 +368,8 @@ def sizes_and_modes(a: Page, b: Page, c: Page, pip: Page) -> None:
     # 12. Sizes: the host's alone; Elapsed set to 50 % halves it on a viewer's panel and in the pop-out, Remaining kept.
     ok("the host has a slider beside each timer", on_clock(c, _SLIDERS) == ["elapsed", "remaining"], on_clock(c, _SLIDERS))
     ok("a viewer has none", on_clock(a, _SLIDERS) == [], on_clock(a, _SLIDERS))
+    maxima = on_clock(c, f"() => [...{_CLOCK_ROOT}.querySelectorAll('input.size')].map(s => s.max)")
+    ok("the sliders go to four times (Terry, 2026-11-01: twice the 200 %)", maxima == ["400", "400"], maxima)
     before, pip_before = on_clock(a, _PANEL), pip.evaluate(_POPOUT)
     on_clock(c, _SLIDE, ["elapsed", 50])
     c.wait_for_timeout(2500)

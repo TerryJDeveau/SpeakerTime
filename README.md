@@ -11,10 +11,13 @@ or type one, and press **Create New Session**. Set the **Time Limit** in
 minutes, to one decimal place (2.5 is two and a half minutes), and use
 **Start**, **Stop** (a pause: Start resumes) and **Reset** (pressed while
 running, it stops the timer too). Time Remaining is the Time Limit minus
-Elapsed Time and goes negative, in red, once the limit is passed; with a blank,
-0 or negative limit it stays at zero. The slider on the right of each timer
-sets its size, from a quarter to double, on every viewer's panel and pop-out
-as well as the host's.
+Elapsed Time. It turns red and blinks when it reaches zero, and once the limit
+is passed it goes negative and its label reads **Overtime**, red and blinking
+too; with a blank, 0 or negative limit it stays at zero (and plain). The
+slider on the right of each timer sets its size, from a quarter to four
+times, on every viewer's panel and pop-out as well as the host's (the
+figures never grow wider than the panel, so the largest settings show only
+where the height, not the width, limits them).
 
 **H:MM:SS or MMM.M**: the switch under the timers shows them as hours, minutes
 and seconds, or as minutes to a tenth ("12.5"). Every panel and every pop-out
