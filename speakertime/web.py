@@ -46,6 +46,17 @@ other. A panel starts at the host's choice when it opens, and takes the
 host's choice again whenever a host connects (whichever is the later); a
 pop-out starts at its panel's choice when it opens.
 
+The host's Buzzer (Terry, 2026-11-03)
+-------------------------------------
+Only the host's panel has the button. While it is held, Time Remaining reads
+"BUZZ" in red on every panel and pop-out, and a buzzer sounds on every
+viewer's page; let go, all is as before. It is sent through the check-in's
+element (``_SYNC_JS``), whose trigger reruns the fragment alone: the clock's
+would make a whole run, which can lay the clock out again under the finger.
+A browser lets a page sound only once it has been clicked or a key pressed
+on it since it loaded, so a viewer's page that reconnected by itself (a
+reload) says so under its clock until it is clicked.
+
 What the browser keeps
 ----------------------
 Three cookies and three notes per tab:
@@ -91,7 +102,9 @@ from streamlit.runtime.scriptrunner_utils.script_run_context import get_script_r
 
 from . import ids
 from .colours import AUTO, CLOCK_COLOURS, DARK, DEFAULT_COLOUR, LIGHT, warning_colour
-from .sessions import HOST, REGISTRY, SIZE_DEFAULT, SIZE_MAX, SIZE_MIN, SIZE_STEP, SIZED, VIEWER, Checked, Refused, Shown
+from .sessions import (
+    BUZZ_HOLD_S, HOST, REGISTRY, SIZE_DEFAULT, SIZE_MAX, SIZE_MIN, SIZE_STEP, SIZED, VIEWER, Checked, Refused, Shown,
+)
 from .shared import version_text
 from .store import TOKEN_NAME, GistStore
 from .timer import CLOCK, MINUTES, MODES, limit_minutes
@@ -157,6 +170,7 @@ _MODE = "mode"            # this panel's way of showing the times (timer.MODES);
 _EPOCH = "epoch"          # the session's host_epoch when this panel last took the host's way
 _CLOCK = "clock"          # the clock element: its triggers, "mode" (the switch) and "size" (a slider)
 _LOST = "lost"            # the check-in's script found the clock gone from the page: lay the page out again
+_SYNC = "sync"            # the check-in's element: its triggers, "tick" (the pop-out's), "lost" and "buzz" (the host's Buzzer)
 
 # The clock's look. A dark panel with light figures reads well from a lectern
 # and in a small window beside the slides; the host may turn it white with
@@ -245,6 +259,26 @@ intensive throttling), the fragment's among them; the pop-out window is
 shown, so its timers are not slowed.
 """
 
+_BUZZER_LABEL = "Buzzer"
+_BUZZ_TEXT = "BUZZ"
+"""Time Remaining's figures while the host holds the Buzzer, in the out-of-time red, steady."""
+_BUZZ_NOTE = "Click anywhere on this page once so that it can sound the buzzer."
+"""Under a viewer's clock while its page may not sound yet (no click or key on it since it loaded)."""
+
+_BUZZ_RESEND_MS = round(BUZZ_HOLD_S * 1000 / 3)
+"""While the Buzzer is held, the host's page says so again this often: the server stops it after BUZZ_HOLD_S without word."""
+
+_BUZZ_CHECK_MS = 1500
+"""A check-in this long after the Buzzer was last sent that still disagrees with the host's page has it sent again.
+
+A send from the check-in's element can be lost when the element is rebuilt
+(each check-in rebuilds it), as the pop-out's kick may be.
+"""
+
+_BUZZ_SOUND = {"hz": [110, 113], "lowpass": 1500, "gain": 0.25, "attack": 0.02, "release": 0.06}
+"""The buzzer: two square waves 3 Hz apart, beating, through a low-pass filter (Hz), at a quarter of full volume,
+rising and falling in ``attack`` and ``release`` seconds, so that it starts and stops without a click."""
+
 _MODE_NAMES = {CLOCK: "H:MM:SS", MINUTES: "MMM.M"}
 """The switch's two buttons (Terry's names for the two ways)."""
 
@@ -305,7 +339,7 @@ _SHARED_CSS = f"""
 .value[data-v="remaining"] {{ color: var(--c-remaining); }}
 .value[data-v="warning"], .value.warn {{ color: var(--c-warning); }}
 .over {{ color: var(--over); }}
-.value.over {{ color: var(--over); }}
+.value.over, .value.buzz {{ color: var(--over); }}
 .blink {{ animation: speakertime-blink {_BLINK_S}s steps(1, end) infinite; }}
 @keyframes speakertime-blink {{ 50% {{ opacity: 0.15; }} }}
 .pair {{ display: flex; justify-content: center; container-type: inline-size; }}
@@ -458,6 +492,8 @@ const PIP_HTML = {json.dumps(_PIP_HTML)};
 const PIP_CSS = {json.dumps(_PIP_CSS)};
 const WATCH_JS = {json.dumps(_WATCH_JS)};
 const POPUP_KEY = {json.dumps(POPUP_KEY)};
+const BUZZ_TEXT = {json.dumps(_BUZZ_TEXT)};
+const BUZZ = {json.dumps(_BUZZ_SOUND)};
 
 // Whole seconds as a clock shows them: "4:05", "1:02:03", a minus sign before
 // a negative time. As timer.clock_text.
@@ -503,22 +539,36 @@ const hub = () => (window.speakerTime ??= {{
   pageMode: CLOCK,  // the panel's way of showing the times (the page's own switch)
   pipMode: CLOCK,   // the pop-out's (its own switch; the panel's when it opened)
   preview: {{}},     // the host's slider while dragged, before the size comes back from the server
+  host: null,       // whether this page hosts the session (the clock's data); null until the clock has said
+  listening: false, // the page's own listeners for the Buzzer are added (_CLOCK_JS, listen)
+  buzzHeld: false,  // the host's Buzzer is held on this page
+  buzzBy: null,     // held by "pointer" or "key"
+  buzzWant: null,   // what this page last sent of it: true held, false let go; null for nothing
+  buzzSentAt: -Infinity,  // when it last sent it (performance.now())
+  buzzSend: null,   // sends it (the latest sync element's trigger)
+  audio: null,      // the page's AudioContext, on a viewer's page once it may sound (wake)
+  tone: null,       // the buzzer while it sounds: {{ gain, oscillators }}
 
-  // A check-in's reading (or the clock's own, as it is laid out).
+  // A check-in's reading (or the clock's own, as it is laid out). A Buzzer
+  // that stopped by itself changes no version, so its state is taken from
+  // every reading.
   update(reading) {{
     const at = performance.now();
     const b = this.base;
     if (b !== null && b.sid === reading.sid && b.version === reading.version) {{
       const predicted = b.elapsed + (b.running ? (at - b.at) / 1000 : 0);
       if (Math.abs(predicted - reading.elapsed) <= RESYNC_S) {{
+        b.buzz = reading.buzz === true;
         this.lastSync = at;
+        this.buzzer(b.buzz);
         return;
       }}
     }}
     this.base = {{ sid: reading.sid, elapsed: reading.elapsed, running: reading.running, limit: reading.limit,
                   warning: reading.warning ?? null, version: reading.version, sizes: reading.sizes ?? {{}},
-                  look: reading.look ?? null, at }};
+                  look: reading.look ?? null, buzz: reading.buzz === true, at }};
     this.lastSync = at;
+    this.buzzer(this.base.buzz);
   }},
 
   // The three texts now, as timer.elapsed_shown and remaining_shown (CLOCK),
@@ -529,10 +579,12 @@ const hub = () => (window.speakerTime ??= {{
   // the figures as shown, so MMM.M is out from "0.0" (Terry, 2026-11-01:
   // "when the display is zero"). "warn": it shows no more than the Time Left
   // Warning, and more than zero (the warning's colour); "warning" the
-  // warning's own figures (null for none).
+  // warning's own figures (null for none). "buzz": the host's Buzzer is
+  // held, on the host's own page at once, elsewhere as the server says.
   texts(mode) {{
     const b = this.base;
     if (b === null) return null;
+    const buzz = this.buzzHeld || b.buzz === true;
     const elapsed = b.elapsed + (b.running ? (performance.now() - b.at) / 1000 : 0);
     const shown = Math.max(0, Math.floor(elapsed));
     if (mode === MINUTES) {{
@@ -543,13 +595,13 @@ const hub = () => (window.speakerTime ??= {{
       return {{ elapsed: minutes(tenths), remaining: minutes(remaining), over: remaining < 0,
                out: limit !== null && remaining <= 0, limit: limit === null ? "none" : minutes(limit),
                warn: limit !== null && warning !== null && remaining > 0 && remaining <= warning,
-               warning: warning === null ? null : minutes(warning) }};
+               warning: warning === null ? null : minutes(warning), buzz }};
     }}
     const remaining = b.limit === null ? 0 : b.limit - shown;
     return {{ elapsed: clock(shown), remaining: clock(remaining), over: remaining < 0,
              out: b.limit !== null && remaining <= 0, limit: b.limit === null ? "none" : clock(b.limit),
              warn: b.limit !== null && b.warning !== null && remaining > 0 && remaining <= b.warning,
-             warning: b.warning === null ? null : clock(b.warning) }};
+             warning: b.warning === null ? null : clock(b.warning), buzz }};
   }},
 
   // The session's look on a panel (the .clock element) or the pop-out (its body): the theme's colours and the timers'.
@@ -591,21 +643,81 @@ const hub = () => (window.speakerTime ??= {{
         label.classList.toggle("blink", overtime);
       }}
       if (value === null) continue;
-      if (value.textContent !== t[name]) {{
-        value.textContent = t[name];
-        value.style.setProperty("--chars", String(Math.max(4, t[name].length)));
+      // BUZZ in place of Remaining's figures, sized as five of them at the least: its letters are wider than digits.
+      const buzz = name === "remaining" && t.buzz;
+      const text = buzz ? BUZZ_TEXT : t[name];
+      if (value.textContent !== text) {{
+        value.textContent = text;
+        value.style.setProperty("--chars", String(Math.max(buzz ? 5 : 4, t[name].length)));
       }}
       if (name === "elapsed" || name === "remaining") {{
         const scale = String((this.preview[name] ?? this.base.sizes[name] ?? SIZE_DEFAULT) / 100);
         if (value.style.getPropertyValue("--scale") !== scale) value.style.setProperty("--scale", scale);
       }}
       if (name === "remaining") {{
-        value.classList.toggle("over", t.out);
-        value.classList.toggle("blink", t.out);
-        value.classList.toggle("warn", t.warn);
+        value.classList.toggle("over", t.out && !buzz);
+        value.classList.toggle("blink", t.out && !buzz);
+        value.classList.toggle("warn", t.warn && !buzz);
+        value.classList.toggle("buzz", buzz);
       }}
     }}
     for (const button of root.querySelectorAll(".modes button")) button.classList.toggle("on", button.dataset.m === mode);
+    this.buzzer(t.buzz);
+  }},
+
+  // Whether this page may sound: clicked, or a key pressed on it, since it
+  // loaded (the browsers' rule for sound); where the browser cannot say,
+  // whether its sound is running.
+  mayPlay() {{
+    const activation = navigator.userActivation;
+    return activation ? activation.hasBeenActive : this.audio !== null && this.audio.state === "running";
+  }},
+
+  // A viewer's page's sound: made, or woken, on a click or a key (_CLOCK_JS,
+  // listen), or once the page may sound. None on the host's page.
+  wake() {{
+    if (this.host !== false) return;
+    try {{
+      this.audio ??= new AudioContext();
+      if (this.audio.state === "suspended") this.audio.resume().catch(() => {{}});
+    }} catch (error) {{}}  // no sound in this browser
+  }},
+
+  // The buzzer on a viewer's page, sounding while on: called by every
+  // check-in and every draw, the pop-out's included, so that a page hidden
+  // behind the slides, its own timers slowed, still starts and stops in time.
+  buzzer(on) {{
+    if (this.host !== false) on = false;
+    else if (this.audio === null && this.mayPlay()) this.wake();
+    const ctx = this.audio;
+    if (on && this.tone === null && ctx !== null && ctx.state === "running") {{
+      const now = ctx.currentTime;
+      const gain = ctx.createGain();
+      gain.gain.setValueAtTime(0, now);
+      gain.gain.linearRampToValueAtTime(BUZZ.gain, now + BUZZ.attack);
+      const filter = ctx.createBiquadFilter();
+      filter.type = "lowpass";
+      filter.frequency.value = BUZZ.lowpass;
+      filter.connect(gain);
+      gain.connect(ctx.destination);
+      const oscillators = BUZZ.hz.map((hz) => {{
+        const oscillator = ctx.createOscillator();
+        oscillator.type = "square";
+        oscillator.frequency.value = hz;
+        oscillator.connect(filter);
+        oscillator.start(now);
+        return oscillator;
+      }});
+      this.tone = {{ gain, oscillators }};
+    }} else if (!on && this.tone !== null) {{
+      const {{ gain, oscillators }} = this.tone;
+      this.tone = null;
+      const now = ctx.currentTime;
+      gain.gain.cancelScheduledValues(now);
+      gain.gain.setValueAtTime(gain.gain.value, now);
+      gain.gain.linearRampToValueAtTime(0, now + BUZZ.release);
+      for (const oscillator of oscillators) oscillator.stop(now + BUZZ.release + 0.01);
+    }}
   }},
 
   // The pop-out (popup false), or a plain pop-up (true): drawn and timed from
@@ -665,9 +777,11 @@ const hub = () => (window.speakerTime ??= {{
 _CLOCK_HTML = (
     '<div class="clock">'
     + "".join(_row(name, name in SIZED) for name in ("elapsed", "remaining", "limit"))
-    + f'<div class="tools">{_MODES_HTML}<button class="pop" type="button" hidden></button></div>'
+    + f'<div class="tools">{_MODES_HTML}<button class="pop" type="button" hidden></button>'
+    + f'<button class="buzzer" type="button" hidden>{_BUZZER_LABEL}</button></div>'
     + '<div class="why" hidden></div>'
     + '<div class="note" hidden></div>'
+    + f'<div class="buzz-note" hidden>{_BUZZ_NOTE}</div>'
     + "</div>"
 )
 
@@ -704,12 +818,14 @@ _CLOCK_CSS = f"""
 .modes {{ display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }}
 .modes button {{ font: inherit; font-size: 14px; color: var(--text); background: transparent; border: 0;
   padding: 4px 10px; cursor: pointer; }}
-.pop {{
+.pop, .buzzer {{
   font: inherit; font-size: 14px; color: var(--text); background: transparent;
   border: 1px solid var(--line); border-radius: 8px; padding: 4px 12px; cursor: pointer;
 }}
 .pop:hover {{ border-color: var(--text); }}
-.note, .why {{ font-size: 13px; text-align: center; margin-top: 6px; }}
+.buzzer {{ border-color: var(--over); touch-action: none; user-select: none; -webkit-user-select: none; }}
+.buzzer.on {{ background: var(--over); color: var(--panel); }}
+.note, .why, .buzz-note {{ font-size: 13px; text-align: center; margin-top: 6px; }}
 """
 
 _POP_OPEN = "Pop out (stays on top)"
@@ -778,6 +894,8 @@ const POP_LOCK_OF = {json.dumps(_POP_LOCK_OF)};
 const LOCKS_MS = {_LOCKS_MS};
 const POPUP_FEATURES = {json.dumps(_POPUP_FEATURES)};
 const PIP_SIZE = {{ width: 340, height: 280 }};
+const BUZZ_RESEND_MS = {_BUZZ_RESEND_MS};
+const BUZZ_CHECK_MS = {_BUZZ_CHECK_MS};
 
 // The Document Picture-in-Picture API of the top window: a pop-out may be
 // opened only from a top-level page (Chrome: "only allowed from a top-level
@@ -826,6 +944,57 @@ const drawPanel = (h) => {{
     : ELSEWHERE.replace("{{of}}", h.elsewhere ? " (session " + h.elsewhere + ")" : "");
   if (why.textContent !== text) why.textContent = text;
   why.hidden = text === "";
+  keepBuzz(h);
+  root.querySelector(".buzzer").classList.toggle("on", h.buzzHeld);
+  const deaf = root.querySelector(".buzz-note");
+  const hidden = h.host !== false || h.mayPlay();
+  if (deaf.hidden !== hidden) deaf.hidden = hidden;
+}};
+
+// The host's Buzzer to the server, as this page holds it now, through the
+// check-in's element (h.buzzSend, from _SYNC_JS).
+const sendBuzz = (h) => {{
+  h.buzzSentAt = performance.now();
+  try {{ h.buzzSend?.(h.buzzWant); }} catch (error) {{}}  // the element that gave it is gone: sent again (keepBuzz)
+}};
+
+// The Buzzer held (by "pointer" or "key") or let go (null): shown on this
+// panel at once, and sent.
+const hold = (h, by) => {{
+  const on = by !== null;
+  if (on === h.buzzHeld) return;
+  h.buzzHeld = on;
+  h.buzzBy = by;
+  h.buzzWant = on;
+  sendBuzz(h);
+  drawPanel(h);
+}};
+
+// While it is held, said again every BUZZ_RESEND_MS (the server stops it
+// after BUZZ_HOLD_S without word); held or let go, sent again while a
+// check-in come since, BUZZ_CHECK_MS after the send, still disagrees.
+const keepBuzz = (h) => {{
+  if (h.buzzWant === null || h.base === null) return;
+  const since = performance.now() - h.buzzSentAt;
+  const disagrees = h.lastSync > h.buzzSentAt && (h.base.buzz === true) !== h.buzzWant;
+  if ((h.buzzHeld && since > BUZZ_RESEND_MS) || (disagrees && since > BUZZ_CHECK_MS)) sendBuzz(h);
+}};
+
+// The page's own listeners, added once: the Buzzer let go wherever the
+// pointer is when its button comes up (or a pointerup missed: a move with
+// no button down), its key let go, or the page left; and a click or a key
+// anywhere on a viewer's page lets it sound.
+const listen = (h) => {{
+  const letGo = () => hold(h, null);
+  const isKey = (event) => event.key === " " || event.key === "Enter";
+  window.addEventListener("pointerup", letGo);
+  window.addEventListener("pointercancel", letGo);
+  window.addEventListener("blur", letGo);
+  window.addEventListener("pointermove", (event) => {{ if (h.buzzBy === "pointer" && (event.buttons & 1) === 0) letGo(); }});
+  window.addEventListener("keyup", (event) => {{ if (h.buzzBy === "key" && isKey(event)) letGo(); }});
+  document.addEventListener("visibilitychange", () => {{ if (document.hidden) letGo(); }});
+  window.addEventListener("pointerdown", () => h.wake(), true);
+  window.addEventListener("keydown", () => h.wake(), true);
 }};
 
 // The pop-out, if no other tab of this browser holds it: the lock is asked
@@ -910,7 +1079,18 @@ export default function (component) {{
   h.send = setTriggerValue;
   const root = parentElement.querySelector(".clock");
   h.clock = root;
+  h.host = data.host;
   root.classList.toggle("host", data.host);
+  root.querySelector(".buzzer").hidden = !data.host;
+  if (!data.host) {{
+    h.buzzHeld = false;
+    h.buzzBy = null;
+    h.buzzWant = null;
+  }}
+  if (!h.listening) {{
+    h.listening = true;
+    listen(h);
+  }}
   if (data.host) {{
     for (const slider of root.querySelectorAll("input.size")) {{
       slider.value = String(data.sizes[slider.dataset.t]);
@@ -958,6 +1138,21 @@ function wire(h, root) {{
       }});
     }}
   }}
+
+  // The host's Buzzer: held while its button is down, or Space or Enter on it; let go by the page's listeners (listen).
+  const buzzer = root.querySelector(".buzzer");
+  buzzer.addEventListener("pointerdown", (event) => {{
+    if (event.button !== 0) return;
+    event.preventDefault();
+    try {{ buzzer.setPointerCapture(event.pointerId); }} catch (error) {{}}
+    hold(h, "pointer");
+  }});
+  buzzer.addEventListener("keydown", (event) => {{
+    if (event.key !== " " && event.key !== "Enter") return;
+    event.preventDefault();
+    if (!event.repeat) hold(h, "key");
+  }});
+  buzzer.addEventListener("contextmenu", (event) => event.preventDefault());  // a long press on a phone
 
   // This panel's own switch: shown at once, and told to the page (the host's is every page's default).
   for (const button of root.querySelectorAll(".modes button")) {{
@@ -1012,6 +1207,7 @@ export default function (component) {{
   const h = hub();
   h.update(data);
   h.kick = () => setTriggerValue("tick", Date.now());
+  h.buzzSend = (on) => setTriggerValue("buzz", {{ on, n: Date.now() }});
   h.missing = h.clock !== null && h.clock.isConnected ? 0 : h.missing + 1;
   if (h.missing >= LOST_AFTER) {{
     h.missing = 0;
@@ -1583,6 +1779,17 @@ def _ticked() -> None:
     """The pop-out asked for a check-in: the fragment's run is the check-in."""
 
 
+def _buzz_sent() -> None:
+    """The host's Buzzer held or let go (sent through the check-in's element, ``_SYNC_JS``): for every page of the session."""
+    sent = (st.session_state.get(_SYNC) or {}).get("buzz")
+    if not isinstance(sent, dict):
+        return
+    try:
+        REGISTRY.buzz(st.session_state.get(_SID), _page(), sent.get("on") is True)
+    except Refused:
+        pass  # no longer the host: the check-in that follows says so
+
+
 def _clock_lost() -> None:
     """The check-in's script has found the clock gone from the page (``_LOST_AFTER``): the fragment's run lays the whole page out again."""
     st.session_state[_LOST] = True
@@ -1699,8 +1906,8 @@ def _live(sid: str, role: str) -> None:
     # must see every check-in arrive to know when to ask for one.
     state[_BEAT] = state.get(_BEAT, 0) + 1
     sync = st.components.v2.component("speakertime_sync", js=_SYNC_JS)
-    sync(key="sync", data={"sid": sid, "beat": state[_BEAT], **checked.shown.for_script()}, on_tick_change=_ticked,
-         on_lost_change=_clock_lost)
+    sync(key=_SYNC, data={"sid": sid, "beat": state[_BEAT], **checked.shown.for_script()}, on_tick_change=_ticked,
+         on_lost_change=_clock_lost, on_buzz_change=_buzz_sent)
     shown = checked.shown
     if role == HOST:
         viewers = "1 viewer" if shown.viewers == 1 else f"{shown.viewers} viewers"

@@ -4,8 +4,8 @@ Starts the page on a free port (or tests ``--url``), then plays the
 session's life through: waiting for a session not yet created, a taken ID,
 the timers agreeing on every screen, reloads, the host's window closed and
 "Assume Host Role?", a creator who comes back, Leave Session, the pop-out
-window, the pop-ups offered while another tab of the browser has it, and a
-tab holding an earlier version's state.
+window, the pop-ups offered while another tab of the browser has it, a
+tab holding an earlier version's state, and the host's Buzzer.
 Prints each check and exits 1 on any failure.
 
 Needs Playwright (``pip install playwright``) and a Chromium: ``--chrome``
@@ -34,7 +34,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from speakertime.colours import CLOCK_COLOURS, WARNING_CANDIDATES, complement  # noqa: E402
-from speakertime.sessions import HOST_GRACE_S  # noqa: E402
+from speakertime.sessions import BUZZ_HOLD_S, HOST_GRACE_S  # noqa: E402
 
 FAILURES: list[str] = []
 
@@ -399,6 +399,7 @@ def run(url: str, launch: dict, shots: Path | None) -> None:
             colours_and_warning(a, c, a_pip)
         windows_of_one_browser(browser, errors)
         popups_of_one_browser(browser, errors, shot)
+        buzzer_held(browser, errors, shot)
 
         ok("no script errors on any page", not errors, errors)
         browser.close()
@@ -815,8 +816,130 @@ def popups_of_one_browser(browser, errors: list[str], shot) -> None:
     profile.close()
 
 
+# The Buzzer as a page shows it: Remaining's text, colour and classes, whether the button is shown, the note under
+# a viewer's clock (null while hidden), and the page's sound. An expression, for Playwright and for quiet() alike.
+_BUZZ_SEEN = f"""(() => {{
+  const r = {_CLOCK_ROOT};
+  const v = r.querySelector('[data-v="remaining"]'), note = r.querySelector('.buzz-note'), h = window.speakerTime;
+  return {{ remaining: v.textContent, colour: getComputedStyle(v).color, blink: v.classList.contains('blink'),
+           over: v.classList.contains('over'), button: !r.querySelector('.buzzer').hidden,
+           note: note.hidden ? null : note.textContent, audio: h.audio ? h.audio.state : null, sounding: h.tone !== null }};
+}})()"""
+_BUZZ_NOTE = "Click anywhere on this page once so that it can sound the buzzer."
+# The host's page sends nothing more of its Buzzer: each check-in sets the sender again, so it is pinned to none.
+_MUTE = "Object.defineProperty(window.speakerTime, 'buzzSend', { get: () => null, set: () => {}, configurable: true })"
+
+
+def quiet(page: Page):
+    """A reader of ``page`` that does not count as the user's gesture there.
+
+    Playwright runs its own scripts as gestures (userGesture), which a browser
+    takes for a click on the page, after which the page may sound: the note
+    the Buzzer's check looks for would go at the first look. Chrome's own
+    protocol, asked directly, runs a script as no gesture.
+    """
+    session = page.context.new_cdp_session(page)
+
+    def read(expression: str) -> object:
+        answer = session.send("Runtime.evaluate", {
+            "expression": f"(() => {{ try {{ return {expression}; }} catch (error) {{ return null; }} }})()", "returnByValue": True})
+        return answer.get("result", {}).get("value")
+    return read
+
+
+def buzzer_held(browser, errors: list[str], shot) -> None:
+    """20. The host's Buzzer (Terry, 2026-11-03): held, BUZZ in red everywhere and a buzzer at every viewer; let go, the time again."""
+    pages = []
+    for create in (True, False):
+        page = browser.new_context(viewport={"width": 700, "height": 800}).new_page()
+        page.on("pageerror", lambda error: errors.append(f"buzzer: {error}"))
+        page.goto(profile_url)
+        page.locator('[data-testid="stApp"]').wait_for()
+        page.wait_for_timeout(2000)
+        id_box(page).fill("FOXTROT")
+        button(page, "Create New Session" if create else "Connect to Session").click()
+        page.get_by_text("You are the host." if create else "You are viewing it.").wait_for(timeout=5000)
+        pages.append(page)
+    host, viewer = pages
+    limit_box(host).fill("5")
+    limit_box(host).press("Enter")
+    host.wait_for_timeout(800)
+    button(host, "Start").click()
+    ok("the Buzzer on the host's panel alone", (on_clock(host, _BUZZ_SEEN)["button"], on_clock(viewer, _BUZZ_SEEN)["button"]) == (True, False))
+
+    # A viewer's page reconnected by itself (a reload) may not sound until clicked: it says so, and a click ends it.
+    read = quiet(viewer)
+    viewer.reload()
+    settled(lambda: read("document.body.innerText.includes('You are viewing it.')"), True, 8.0)
+    seen = settled(lambda: (read(_BUZZ_SEEN) or {}).get("note"), _BUZZ_NOTE, 5.0)
+    ok("a viewer's page reconnected by itself: the note to click it", seen == _BUZZ_NOTE, seen)
+    shot(viewer, "9-buzzer-note.png")
+    viewer.mouse.click(12, 400)  # the page's margin: a click on nothing
+    seen = settled(lambda: [(read(_BUZZ_SEEN) or {}).get(k) for k in ("note", "audio")], [None, "running"], 3.0)
+    ok("clicked: the note gone, its sound ready", seen == [None, "running"], seen)
+    with viewer.context.expect_page(timeout=5000) as popped:
+        on_clock(viewer, _CLICK_POP)
+    pip = popped.value
+    viewer.wait_for_timeout(1000)
+
+    def everywhere() -> list[str]:
+        return [on_clock(host, _BUZZ_SEEN)["remaining"], read(_BUZZ_SEEN)["remaining"], pip.locator('[data-v="remaining"]').text_content()]
+
+    # Held by the mouse: at once on the host's panel, within 2.5 s on the viewer's and its pop-out, and it sounds there.
+    box = host.locator(".buzzer").bounding_box()
+    host.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+    host.mouse.down()
+    began = time.monotonic()
+    seen = on_clock(host, _BUZZ_SEEN)
+    ok("held: BUZZ on the host's panel at once, in steady red; no sound on the host's page",
+       (seen["remaining"], seen["colour"], seen["blink"], seen["over"], seen["audio"]) == ("BUZZ", rgb("#ff2a2a"), False, False, None), seen)
+    seen = settled(everywhere, ["BUZZ"] * 3, 2.5)
+    ok("and on a viewer's panel and its pop-out within 2.5 s", seen == ["BUZZ"] * 3, [seen, f"{(time.monotonic() - began) * 1000:.0f} ms"])
+    seen = read(_BUZZ_SEEN)
+    ok("the viewer's buzzer sounds, its BUZZ in red too", (seen["audio"], seen["sounding"], seen["colour"]) == ("running", True, rgb("#ff2a2a")), seen)
+    shot(host, "10-buzzer-held.png")
+    shot(pip, "11-popout-buzz.png")
+    host.wait_for_timeout((BUZZ_HOLD_S + 2) * 1000 - (time.monotonic() - began) * 1000)
+    seen = everywhere()
+    ok(f"held {BUZZ_HOLD_S + 2:.0f} s: still BUZZ everywhere (the host's page says so again)", seen == ["BUZZ"] * 3, seen)
+    host.mouse.up()
+    seen = settled(lambda: [t != "BUZZ" for t in everywhere()] + [read(_BUZZ_SEEN)["sounding"]], [True, True, True, False], 2.5)
+    ok("let go: the time again everywhere within 2.5 s, the sound stopped", seen == [True, True, True, False], [everywhere(), seen])
+
+    # Held by Space on the button.
+    host.locator(".buzzer").focus()
+    host.keyboard.down("Space")
+    seen = settled(lambda: everywhere()[1:], ["BUZZ"] * 2, 2.5)
+    ok("held by Space: BUZZ at the viewer's", seen == ["BUZZ"] * 2, seen)
+    host.keyboard.up("Space")
+    seen = settled(lambda: [t != "BUZZ" for t in everywhere()], [True] * 3, 2.5)
+    ok("Space let go: the time again", seen == [True] * 3, everywhere())
+
+    # The host's page can say nothing more while held (as with its connection lost): the server stops the Buzzer by
+    # itself, which changes no version, so the viewer takes it from a check-in.
+    host.mouse.down()
+    settled(lambda: read(_BUZZ_SEEN)["remaining"], "BUZZ", 2.5)
+    host.evaluate(_MUTE)
+    muted = time.monotonic()
+    seen = settled(lambda: read(_BUZZ_SEEN)["remaining"] != "BUZZ", True, BUZZ_HOLD_S + 3)
+    took = time.monotonic() - muted
+    ok(f"held, the host's page silenced: stopped by itself about {BUZZ_HOLD_S:.0f} s after its last word",
+       seen is True and took > BUZZ_HOLD_S - 5 and read(_BUZZ_SEEN)["sounding"] is False, f"{took:.1f} s")
+    host.mouse.up()
+    host.evaluate("delete window.speakerTime.buzzSend")
+    # The host's page closed with the button down: let go at once (the page is hidden as it goes).
+    host.wait_for_timeout(1500)
+    host.mouse.down()
+    settled(lambda: read(_BUZZ_SEEN)["remaining"], "BUZZ", 2.5)
+    host.close()
+    closed = time.monotonic()
+    seen = settled(lambda: read(_BUZZ_SEEN)["remaining"] != "BUZZ", True, 2.5)
+    ok("the host's page closed while held: let go within 2.5 s", seen is True, f"{time.monotonic() - closed:.1f} s")
+    viewer.context.close()
+
+
 profile_url = ""
-"""The page's address, for windows_of_one_browser and popups_of_one_browser (set by run)."""
+"""The page's address, for windows_of_one_browser, popups_of_one_browser and buzzer_held (set by run)."""
 
 
 def main() -> int:
