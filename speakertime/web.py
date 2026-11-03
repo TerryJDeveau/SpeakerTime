@@ -295,7 +295,9 @@ _LOOK_CSS = f"""
   background: var(--panel); color: var(--text);
 """
 
-# Rules the panel and the pop-out share: the figures' colours, red, blinking, the warning's figures.
+# Rules the panel and the pop-out share: the figures' colours, red, blinking, the warning's figures. The Time
+# Limit and the Time Left Warning stand together in the middle, as the switch's two buttons do, two of their
+# labels' heights apart (Terry, 2026-11-03: not spread across the width; each took half of it until v1.7).
 _SHARED_CSS = f"""
 .value[data-v="elapsed"] {{ color: var(--c-elapsed); }}
 .value[data-v="remaining"] {{ color: var(--c-remaining); }}
@@ -305,7 +307,8 @@ _SHARED_CSS = f"""
 .blink {{ animation: speakertime-blink {_BLINK_S}s steps(1, end) infinite; }}
 @keyframes speakertime-blink {{ 50% {{ opacity: 0.15; }} }}
 .pair {{ display: flex; justify-content: center; container-type: inline-size; }}
-.pair .cell {{ flex: 1 1 0; container-type: normal; }}
+.pair .cell {{ flex: 0 1 auto; min-width: 0; container-type: normal; }}
+.pair .label {{ text-align: center; }}
 .pair .cell[hidden] {{ display: none; }}
 .modes button.on {{ background: var(--text); color: var(--panel); }}
 """
@@ -334,6 +337,7 @@ _PIP_CSS = f"""
   .limit .value {{ font-size: min(7vw, 9vh); font-weight: 600; }}
   .row[data-r="remaining"], .row[data-r="limit"] {{ margin-top: 3vh; }}
   {_SHARED_CSS}
+  .pair .cell + .cell {{ margin-left: calc(2 * min(5vw, 6vh)); }}
   .modes {{ align-self: center; display: inline-flex; border: 1px solid var(--line); border-radius: 6px;
     overflow: hidden; margin-top: 0.5vh; }}
   .modes button {{ font: inherit; font-size: max(10px, min(3.4vw, 4.2vh)); color: var(--text);
@@ -348,7 +352,7 @@ _PIP_CSS = f"""
     .side {{ display: flex; flex-direction: column; align-items: center; gap: 3vh; flex: none; }}
     .side .row[data-r="limit"] {{ margin-top: 0; }}
     .side .pair {{ flex-direction: column; gap: 3vh; container-type: normal; }}
-    .side .pair .cell {{ flex: none; }}
+    .side .pair .cell {{ flex: none; margin-left: 0; }}
     body.gone .timers, body.gone .side {{ display: none; }}
   }}
 """
@@ -691,6 +695,7 @@ _CLOCK_CSS = f"""
   font-size: min(calc(var(--scale) * {_PANEL_UNIT}), calc(100cqw / (var(--chars) * {_CHAR_EM}))); }}
 .limit .value {{ font-size: clamp(22px, 7.6cqw, 54px); font-weight: 600; }}
 .limit .label {{ font-size: clamp(14px, 3.6cqw, 22px); }}
+.pair .cell + .cell {{ margin-left: clamp(28px, 7.2cqw, 44px); }}
 .row[data-r="remaining"], .row[data-r="limit"] {{ margin-top: 20px; }}
 {_SHARED_CSS}
 .tools {{ display: flex; justify-content: center; align-items: center; flex-wrap: wrap; gap: 8px 12px; margin-top: 4px; }}
