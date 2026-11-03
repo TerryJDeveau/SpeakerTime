@@ -89,6 +89,8 @@ def main() -> int:
     a.number_input(key=web._LIMIT_BOX).set_value(2.25).run()
     check("limit rounded in the box", a.number_input(key=web._LIMIT_BOX).value, 2.3)
     check("limit kept in the session", REGISTRY.shown(sid).limit, 2.3)
+    a.number_input(key=web._WARN_BOX).set_value(0.55).run()
+    check("warning rounded in its box, kept in the session", (a.number_input(key=web._WARN_BOX).value, REGISTRY.shown(sid).warning), (0.6, 0.6))
     button(a, "Start").click().run()
     labels = {b.label: b.disabled for b in a.button}
     check("running: Stop and Reset", (labels["Start"], labels["Stop"], labels["Reset"]), (True, False, False))
@@ -131,6 +133,7 @@ def main() -> int:
     button(b, "Yes").click().run()
     check("Yes: the host", "You are the host." in texts(b), True)
     check("its limit box from the session", b.number_input(key=web._LIMIT_BOX).value, 2.3)
+    check("its warning box from the session", b.number_input(key=web._WARN_BOX).value, 0.6)
 
     # What the browser keeps. A new window whose one recent session is running goes back to it by itself.
     c = page(sent({web.RECENT_COOKIE: [sid, "GONE"]}, browser="browserC1"))

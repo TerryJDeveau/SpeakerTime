@@ -31,6 +31,9 @@ The rules (Terry, 2026-10-30):
   another tab is a viewer like any other, offered the role after the grace.
   Measured 2026-11-03: before this, the host's tab reloaded while a viewer's
   tab of the same browser was open, and the viewer's tab became the host.
+- (Terry, 2026-11-01, items 4, 9 and 10) The host sets each timer's colour
+  and the Time Left Warning, with its colour, for everyone (``set_colour``,
+  ``control("warning")``, ``set_warning_colour``; the rules in ``colours``).
 """
 
 from __future__ import annotations
@@ -42,7 +45,10 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from . import ids
-from .timer import CLOCK, MODES, Timer, limit_seconds
+from .colours import (
+    AUTO, CLOCK_COLOURS, DARK, DEFAULT_COLOUR, WARNING_CANDIDATES, choose, warning_choices, warning_colour,
+)
+from .timer import CLOCK, MODES, Timer, limit_minutes, limit_seconds
 
 HOST_GRACE_S = 10.0
 """A host's page that has closed still counts as the host for this long after it last checked in.
@@ -112,6 +118,15 @@ class Session:
     """Raised each time a page becomes the host: every other page then takes ``host_mode`` again."""
     browsers: dict[str, str] = field(default_factory=dict)
     """Each page's browser (a random id its cookie keeps), so that a browser's own pages can be told (``Registry.candidates``)."""
+    colours: dict[str, str] = field(default_factory=lambda: dict.fromkeys(SIZED, DEFAULT_COLOUR))
+    """Each timer's figures' colour (a name of ``colours.CLOCK_COLOURS``), as the host set it."""
+    theme: str = DARK
+    """The panel's theme (``colours.DARK`` or ``LIGHT``), as the host's last choice of black or white left it."""
+    warning: float | None = None
+    """The Time Left Warning in minutes, to a tenth; None (blank), 0 or less mean none."""
+    warning_colour: str = AUTO
+    """The warning's colour: AUTO (Terry's rule) or a name of ``colours.WARNING_CANDIDATES``."""
+
 
 
 @dataclass(frozen=True)
@@ -132,16 +147,39 @@ class Shown:
     """The host's way of showing the times."""
     host_epoch: int
     """How many times a page has become the host."""
+    colours: dict[str, str]
+    """Each timer's figures' colour, a name of ``colours.CLOCK_COLOURS``."""
+    theme: str
+    """The panel's theme."""
+    warning: float | None
+    """The Time Left Warning in minutes; None for none."""
+    warning_colour: str
+    """The warning's colour as chosen: AUTO or a name of ``colours.WARNING_CANDIDATES``."""
 
     def for_script(self) -> dict[str, object]:
-        """What the page's script needs to run the clock (``web._HUB_JS``): the limit in whole seconds, None for none."""
+        """What the page's script needs to run the clock (``web._HUB_JS``): the limit and the warning in whole seconds (None for none), and the colours as drawn."""
         return {
             "elapsed": self.elapsed,
             "running": self.running,
             "limit": limit_seconds(self.limit),
+            "warning": limit_seconds(self.warning),
             "version": self.version,
             "sizes": dict(self.sizes),
+            "look": {
+                "theme": self.theme,
+                "names": dict(self.colours),
+                "elapsed": CLOCK_COLOURS[self.colours["elapsed"]],
+                "remaining": CLOCK_COLOURS[self.colours["remaining"]],
+                "warning": warning_colour(self.warning_colour, self.colours),
+            },
         }
+
+    def warning_buttons(self) -> tuple[list[tuple[str, str]], str]:
+        """The warning's colour buttons for the host: (name, hex) for AUTO and the four others, and the one chosen (AUTO where the choice is not among them)."""
+        choices = warning_choices(self.colours)
+        buttons = [(AUTO, warning_colour(AUTO, self.colours))] + choices
+        chosen = self.warning_colour if any(name == self.warning_colour for name, _ in choices) else AUTO
+        return buttons, chosen
 
 
 @dataclass(frozen=True)
@@ -256,6 +294,10 @@ class Registry:
             sizes=dict(session.sizes),
             host_mode=session.host_mode,
             host_epoch=session.host_epoch,
+            colours=dict(session.colours),
+            theme=session.theme,
+            warning=session.warning,
+            warning_colour=session.warning_colour,
         )
 
     # -- what pages do ------------------------------------------------------
@@ -410,7 +452,11 @@ class Registry:
                 session.version += 1
 
     def control(self, sid: str, page: str, action: str, value: float | None = None) -> None:
-        """The host's buttons and Time Limit: "start", "stop", "reset" or "limit" (with ``value``). Refused for a page that does not host ``sid``."""
+        """The host's buttons, Time Limit and Time Left Warning: "start", "stop", "reset", "limit" or "warning" (the last two with ``value``).
+
+        Refused for a page that does not host ``sid``. The warning is read as
+        the limit is, minutes to a tenth (``timer.limit_minutes``).
+        """
         with self._lock:
             now = self._clock()
             session = self._host_session(sid, page)
@@ -423,6 +469,10 @@ class Registry:
                 changed = timer.reset(now)
             elif action == "limit":
                 changed = timer.set_limit(value)
+            elif action == "warning":
+                warning = limit_minutes(value)
+                changed = warning != session.warning
+                session.warning = warning
             else:
                 raise ValueError(f"no such action: {action!r}")
             session.host_seen = now
@@ -449,6 +499,40 @@ class Registry:
             session = self._host_session(sid, page)
             if session.sizes[timer] != size:
                 session.sizes[timer] = size
+                session.version += 1
+
+    def set_colour(self, sid: str, page: str, timer: str, colour: object) -> None:
+        """A colour button beside the host's slider: ``timer``'s figures' colour for every page, by Terry's rule for black and white (``colours.choose``).
+
+        Refused for a page that does not host ``sid``; ValueError for a timer
+        or colour not known. A warning colour that the change rules out (now
+        a timer's colour, or the default) goes back to AUTO.
+        """
+        if timer not in SIZED or not isinstance(colour, str):
+            raise ValueError(f"not a timer's colour: {timer!r}, {colour!r}")
+        with self._lock:
+            session = self._host_session(sid, page)
+            after, theme = choose(session.colours, session.theme, timer, colour)
+            if (after, theme) == (session.colours, session.theme):
+                return
+            session.colours, session.theme = after, theme
+            if session.warning_colour not in {name for name, _ in warning_choices(after)}:
+                session.warning_colour = AUTO
+            session.version += 1
+
+    def set_warning_colour(self, sid: str, page: str, choice: object) -> None:
+        """A colour button beside the Time Left Warning: AUTO (Terry's rule) or one of the four others shown (``colours.warning_choices``).
+
+        Refused for a page that does not host ``sid``; ValueError for a choice
+        that is not one of them now.
+        """
+        with self._lock:
+            session = self._host_session(sid, page)
+            shown = {AUTO} | {name for name, _ in warning_choices(session.colours)}
+            if choice not in shown or choice not in WARNING_CANDIDATES and choice != AUTO:
+                raise ValueError(f"not a warning colour now: {choice!r}")
+            if session.warning_colour != choice:
+                session.warning_colour = choice
                 session.version += 1
 
     def set_host_mode(self, sid: str, page: str, mode: str) -> None:

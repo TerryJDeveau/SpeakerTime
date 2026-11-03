@@ -19,6 +19,20 @@ times, on every viewer's panel and pop-out as well as the host's (the
 figures never grow wider than the panel, so the largest settings show only
 where the height, not the width, limits them).
 
+**Colours**: beside each slider, a column of colour buttons sets that
+timer's colour for everyone: white (the default), black, yellow, orange,
+green, blue and magenta (never red: red means time is out). Choosing black
+for one timer turns the other black too if it was white, and turns the
+panel white with black text; choosing white does the opposite.
+
+**Time Left Warning**: to the right of the Time Limit box, in minutes (blank
+for none). Once set, it shows beside the Time Limit on every panel and
+pop-out, and while Time Remaining is that many minutes or fewer (and more
+than zero) it changes to the warning's colour. That colour is green while
+Time Remaining is white or black, and otherwise the colour opposite Time
+Remaining's on the colour wheel (the **A** button); the four buttons after it
+are other colours to choose instead.
+
 **H:MM:SS or MMM.M**: the switch under the timers shows them as hours, minutes
 and seconds, or as minutes to a tenth ("12.5"). Every panel and every pop-out
 has its own switch. A panel starts at the host's choice when it opens, and

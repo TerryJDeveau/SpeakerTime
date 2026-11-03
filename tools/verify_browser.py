@@ -29,6 +29,7 @@ from playwright.sync_api import Page, sync_playwright
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+from speakertime.colours import CLOCK_COLOURS, WARNING_CANDIDATES, complement  # noqa: E402
 from speakertime.sessions import HOST_GRACE_S  # noqa: E402
 
 FAILURES: list[str] = []
@@ -341,6 +342,7 @@ def run(url: str, launch: dict, shots: Path | None) -> None:
             ok("the kick brings more, the clock kept", kicked["checkIns"] > alone["checkIns"] + 3 and kicked["clockKept"], kicked)
 
             sizes_and_modes(a, b, c, pip)
+            colours_and_warning(a, c)
         windows_of_one_browser(browser, errors)
 
         ok("no script errors on any page", not errors, errors)
@@ -424,6 +426,84 @@ def sizes_and_modes(a: Page, b: Page, c: Page, pip: Page) -> None:
     on_clock(a, _SWITCH, "clock")
     a.wait_for_timeout(1500)
     ok("then keeps its own", (viewer_pip.evaluate(_POPOUT)["mode"], mode_of(a)) == ("minutes", "clock"))
+
+
+def rgb(hex_colour: str) -> str:
+    """A "#rrggbb" colour as getComputedStyle gives it."""
+    return "rgb({}, {}, {})".format(*(int(hex_colour[i:i + 2], 16) for i in (1, 3, 5)))
+
+
+# The panel's colours as drawn: its background, its label's text, and each figure's colour, with Remaining's classes.
+_PAINT = f"""() => {{
+  const r = {_CLOCK_ROOT};
+  const css = (sel, prop) => getComputedStyle(r.querySelector(sel))[prop];
+  const warning = r.querySelector('[data-w]');
+  return {{ panel: css('.clock', 'backgroundColor'), label: css('[data-l="elapsed"]', 'color'),
+           elapsed: css('[data-v="elapsed"]', 'color'), remaining: css('[data-v="remaining"]', 'color'),
+           warn: r.querySelector('[data-v="remaining"]').classList.contains('warn'),
+           warningShown: !warning.hidden, warningText: r.querySelector('[data-v="warning"]').textContent,
+           warningColour: css('[data-v="warning"]', 'color'),
+           swatches: [...r.querySelectorAll('.swatches')].filter(s => !s.hidden).map(s => s.dataset.t) }};
+}}"""
+_SWATCH = f"([timer, colour]) => {_CLOCK_ROOT}.querySelector('.swatches[data-t=\"' + timer + '\"] button[data-c=\"' + colour + '\"]').click()"
+_PICKS = """() => [...[...document.querySelectorAll('*')].find(e => e.shadowRoot && e.shadowRoot.querySelector('.picks'))
+  .shadowRoot.querySelectorAll('.picks button')].map(b => [b.dataset.c, b.classList.contains('on')])"""
+_PICK = """(name) => [...document.querySelectorAll('*')].find(e => e.shadowRoot && e.shadowRoot.querySelector('.picks'))
+  .shadowRoot.querySelector('.picks button[data-c="' + name + '"]').click()"""
+
+
+def colours_and_warning(a: Page, c: Page) -> None:
+    """16-17. The host's colour buttons and Terry's rule for black and white; the Time Left Warning and its colour (2026-11-01).
+
+    On entry C hosts TALK1 (Time Limit 2.3 minutes, stopped part way), A views it.
+    """
+    ok("colour buttons beside the host's sliders, none for a viewer",
+       (on_clock(c, _PAINT)["swatches"], on_clock(a, _PAINT)["swatches"]) == (["elapsed", "remaining"], []))
+    on_clock(c, _SWATCH, ["elapsed", "black"])
+    c.wait_for_timeout(2500)
+    seen = on_clock(a, _PAINT)
+    ok("black for Elapsed: both timers black, the panel white, its text black, on a viewer's panel",
+       (seen["panel"], seen["label"], seen["elapsed"], seen["remaining"]) == (rgb("#ffffff"), rgb("#000000"), rgb("#000000"), rgb("#000000")),
+       seen)
+    on_clock(c, _SWATCH, ["remaining", "orange"])
+    c.wait_for_timeout(2500)
+    seen = on_clock(a, _PAINT)
+    ok("orange for Remaining: Elapsed stays black, the panel white", (seen["panel"], seen["elapsed"], seen["remaining"])
+       == (rgb("#ffffff"), rgb("#000000"), rgb(CLOCK_COLOURS["orange"])), seen)
+    on_clock(c, _SWATCH, ["elapsed", "white"])
+    c.wait_for_timeout(2500)
+    seen = on_clock(a, _PAINT)
+    ok("white for Elapsed: the panel black, its text white; Remaining stays orange",
+       (seen["panel"], seen["label"], seen["elapsed"], seen["remaining"])
+       == (rgb("#000000"), rgb("#ffffff"), rgb("#ffffff"), rgb(CLOCK_COLOURS["orange"])), seen)
+
+    # 17. The warning: none shown while blank; set to the whole limit, Remaining is within it at once.
+    ok("no warning set: none shown", on_clock(a, _PAINT)["warningShown"] is False)
+    box = c.get_by_role("spinbutton", name="Time Left Warning (minutes)")
+    box.fill("2.3")
+    box.press("Enter")
+    c.wait_for_timeout(2500)
+    seen = on_clock(a, _PAINT)
+    ok("a warning set: shown beside the limit, in the colour opposite orange; Remaining in it",
+       (seen["warningShown"], seen["warningText"], seen["warningColour"], seen["warn"], seen["remaining"])
+       == (True, "2:18", rgb(complement(CLOCK_COLOURS["orange"])), True, rgb(complement(CLOCK_COLOURS["orange"]))), seen)
+    picks = settled(lambda: c.evaluate(_PICKS)[0], ["auto", True])
+    ok("the warning's colour buttons: A chosen, then four", picks == ["auto", True] and len(c.evaluate(_PICKS)) == 5, c.evaluate(_PICKS))
+    c.evaluate(_PICK, "cyan")
+    c.wait_for_timeout(2500)
+    seen = on_clock(a, _PAINT)
+    ok("cyan chosen: the warning and Remaining in cyan", (seen["warningColour"], seen["remaining"])
+       == (rgb(WARNING_CANDIDATES["cyan"]),) * 2, seen)
+    on_clock(c, _SWATCH, ["remaining", "white"])
+    c.wait_for_timeout(2500)
+    seen = on_clock(a, _PAINT)
+    ok("Remaining white again: cyan still one of the choices, so the warning stays cyan",
+       seen["warningColour"] == rgb(WARNING_CANDIDATES["cyan"]), seen)
+    box.fill("")
+    box.press("Enter")
+    c.wait_for_timeout(2500)
+    ok("the warning blanked: none shown, Remaining in its own colour",
+       (on_clock(a, _PAINT)["warningShown"], on_clock(a, _PAINT)["warn"]) == (False, False), on_clock(a, _PAINT))
 
 
 def windows_of_one_browser(browser, errors: list[str]) -> None:

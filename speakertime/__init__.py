@@ -9,6 +9,8 @@ Package layout
 timer     the timer itself: Elapsed Time, Time Remaining and the Time Limit,
           with no Streamlit in it
 ids       session IDs: what may be typed, how it is read, random ones
+colours   the clocks' colours: the host's choices, the rule for black and
+          white, and the Time Left Warning's colour
 sessions  the sessions every page shares (one process serves every visitor),
           and the rules for who hosts them
 shared    copies of ratesplot's helpers (the version shown, the cookie's
@@ -17,8 +19,8 @@ shared    copies of ratesplot's helpers (the version shown, the cookie's
 web       the Streamlit page; ``streamlit_app.py`` runs it
 
 The dependency direction is one-way: ``web`` imports the others; ``sessions``
-imports ``timer`` and ``ids``; ``timer``, ``ids`` and ``shared`` import none of
-this package.
+imports ``timer``, ``ids`` and ``colours``; ``timer``, ``ids``, ``colours`` and
+``shared`` import none of this package.
 """
 
 # The version, major.minor (ratesplot's rule, 2026-10-27, taken over here):

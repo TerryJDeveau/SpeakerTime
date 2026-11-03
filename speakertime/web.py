@@ -76,6 +76,7 @@ from streamlit.runtime import Runtime
 from streamlit.runtime.scriptrunner_utils.script_run_context import get_script_run_ctx
 
 from . import ids
+from .colours import AUTO, CLOCK_COLOURS, DARK, DEFAULT_COLOUR, LIGHT, warning_colour
 from .sessions import HOST, REGISTRY, SIZE_DEFAULT, SIZE_MAX, SIZE_MIN, SIZE_STEP, SIZED, VIEWER, Checked, Refused, Shown
 from .shared import version_text
 from .timer import CLOCK, MINUTES, MODES, limit_minutes
@@ -122,6 +123,8 @@ _SCREEN = "screen"        # START, PENDING, HOST or VIEWER
 _SID = "sid"              # the session waited for, hosted or viewed
 _BOX = "box"              # the Session ID box
 _LIMIT_BOX = "limit_box"  # the Time Limit box (minutes)
+_WARN_BOX = "warn_box"    # the Time Left Warning box (minutes)
+_PICKER = "warn_colours"  # the warning's colour buttons: their trigger, "pick"
 _TOKENS = "tokens"        # the host's token of each session this browser hosted: {sid: token}
 _BROWSER = "browser"      # this browser's id (None if its script could not say)
 _TAB = "tab"              # this tab's id (None if its script could not say)
@@ -137,13 +140,25 @@ _CLOCK = "clock"          # the clock element: its triggers, "mode" (the switch)
 _LOST = "lost"            # the check-in's script found the clock gone from the page: lay the page out again
 
 # The clock's look. A dark panel with light figures reads well from a lectern
-# and in a small window beside the slides. Remaining turns red, and blinks,
-# once it shows zero or less, and its label reads "Overtime" while it is
-# negative (Terry, 2026-11-01). The figures are sized by their column's width
-# (cqw: a hundredth of it) times the host's size, and never wider than the
-# column. The size slider's filled (lower) part is a light red (Terry,
-# 2026-11-01: lighter than the red it had, #e2483d).
-_CLOCK_COLOURS = {"panel": "#111418", "figures": "#f4f6f8", "labels": "#aab2bd", "over": "#ff5a4f", "slider": "#f28b82"}
+# and in a small window beside the slides; the host may turn it white with
+# black text instead (``colours``: choosing black for a timer), and sets each
+# timer's colour for everyone. Remaining turns red, and blinks, once it shows
+# zero or less, and its label reads "Overtime" while it is negative (Terry,
+# 2026-11-01); between the Time Left Warning and zero it is in the warning's
+# colour. The figures are sized by their column's width (cqw: a hundredth of
+# it) times the host's size, and never wider than the column. The colours are
+# CSS variables on the panel (and the pop-out's body), set by the script from
+# the session's look.
+_THEMES = {
+    DARK: {"panel": "#000000", "text": "#ffffff", "line": "#6b7280", "over": "#ff5a4f"},
+    LIGHT: {"panel": "#ffffff", "text": "#000000", "line": "#9ca3af", "over": "#d1242f"},
+}
+"""Each theme's background, other text, lines (buttons' borders) and out-of-time red (darker on white, to read)."""
+
+_SLIDER_COLOUR = "#f28b82"
+"""The size slider's filled (lower) part: a light red (Terry, 2026-11-01: lighter than the red it had, #e2483d)."""
+
+_COLOUR_NAMES = {name: name.capitalize() for name in CLOCK_COLOURS}
 
 _BLINK_S = 1.0
 """Remaining's figures and the Overtime label blink once a second: shown for half of it, faint for the other half."""
@@ -170,51 +185,86 @@ _MODE_NAMES = {CLOCK: "H:MM:SS", MINUTES: "MMM.M"}
 """The switch's two buttons (Terry's names for the two ways)."""
 
 _LABELS = {
-    CLOCK: {"elapsed": "Elapsed Time", "remaining": "Time Remaining", "limit": "Time Limit", "overtime": "Overtime"},
+    CLOCK: {"elapsed": "Elapsed Time", "remaining": "Time Remaining", "limit": "Time Limit", "overtime": "Overtime",
+            "warning": "Time Left Warning"},
     MINUTES: {"elapsed": "Elapsed Time (min)", "remaining": "Time Remaining (min)", "limit": "Time Limit (min)",
-              "overtime": "Overtime (min)"},
+              "overtime": "Overtime (min)", "warning": "Time Left Warning (min)"},
 }
-"""The labels of the three rows in each way of showing the times; "overtime" is Remaining's while it is negative."""
+"""The labels in each way of showing the times; "overtime" is Remaining's while it is negative."""
 
 _MODES_HTML = '<div class="modes" role="group" aria-label="Show the times as">' + "".join(
     f'<button type="button" data-m="{mode}">{name}</button>' for mode, name in _MODE_NAMES.items()
 ) + "</div>"
 
 
-def _row(name: str, slider: bool) -> str:
-    """One row of the clock: its label and figures, and (on the host's panel) the slider for its size."""
-    kind = "limit" if name == "limit" else "timer"
-    size = (
-        f'<input class="size" type="range" data-t="{name}" min="{SIZE_MIN}" max="{SIZE_MAX}" step="{SIZE_STEP}"'
-        f' aria-label="Size of {_LABELS[CLOCK][name]} for everyone" hidden>'
-        if slider else ""
-    )
-    return (
-        f'<div class="row {kind}" data-r="{name}"><div class="cell"><span class="label" data-l="{name}"></span>'
-        f'<span class="value" data-v="{name}"></span></div>{size}</div>'
-    )
+def _cell(name: str, extra: str = "") -> str:
+    return f'<div class="cell"{extra}><span class="label" data-l="{name}"></span><span class="value" data-v="{name}"></span></div>'
 
+
+def _row(name: str, host: bool) -> str:
+    """One row of the clock: its label and figures; on the host's panel, a timer's slider for its size and buttons for its colour.
+
+    The Time Limit's row holds the Time Left Warning beside it, shown only
+    while the host has set one (Terry, 2026-11-01).
+    """
+    if name == "limit":
+        return f'<div class="row limit" data-r="limit"><div class="pair">{_cell("limit")}{_cell("warning", " data-w hidden")}</div></div>'
+    tools = ""
+    if host:
+        swatches = "".join(
+            f'<button type="button" data-c="{colour}" title="{_COLOUR_NAMES[colour]}" aria-label="{_COLOUR_NAMES[colour]}"'
+            f' style="--swatch: {hex_}"></button>'
+            for colour, hex_ in CLOCK_COLOURS.items()
+        )
+        tools = (
+            f'<input class="size" type="range" data-t="{name}" min="{SIZE_MIN}" max="{SIZE_MAX}" step="{SIZE_STEP}"'
+            f' aria-label="Size of {_LABELS[CLOCK][name]} for everyone" hidden>'
+            f'<div class="swatches" data-t="{name}" role="group" aria-label="Colour of {_LABELS[CLOCK][name]} for everyone"'
+            f' hidden>{swatches}</div>'
+        )
+    return f'<div class="row timer" data-r="{name}">{_cell(name)}{tools}</div>'
+
+
+# The colours both the panel and the pop-out take from the session's look (set by the script, ``draw``).
+_LOOK_CSS = f"""
+  --panel: {_THEMES[DARK]["panel"]}; --text: {_THEMES[DARK]["text"]}; --line: {_THEMES[DARK]["line"]};
+  --over: {_THEMES[DARK]["over"]}; --c-elapsed: {CLOCK_COLOURS[DEFAULT_COLOUR]}; --c-remaining: {CLOCK_COLOURS[DEFAULT_COLOUR]};
+  --c-warning: {warning_colour(AUTO, dict.fromkeys(SIZED, DEFAULT_COLOUR))};
+  background: var(--panel); color: var(--text);
+"""
+
+# Rules the panel and the pop-out share: the figures' colours, red, blinking, the warning's figures.
+_SHARED_CSS = f"""
+.value[data-v="elapsed"] {{ color: var(--c-elapsed); }}
+.value[data-v="remaining"] {{ color: var(--c-remaining); }}
+.value[data-v="warning"], .value.warn {{ color: var(--c-warning); }}
+.over {{ color: var(--over); }}
+.value.over {{ color: var(--over); }}
+.blink {{ animation: speakertime-blink {_BLINK_S}s steps(1, end) infinite; }}
+@keyframes speakertime-blink {{ 50% {{ opacity: 0.15; }} }}
+.pair {{ display: flex; justify-content: center; container-type: inline-size; }}
+.pair .cell {{ flex: 1 1 0; container-type: normal; }}
+.pair .cell[hidden] {{ display: none; }}
+.modes button.on {{ background: var(--text); color: var(--panel); }}
+"""
 
 _PIP_HTML = "".join(_row(name, False) for name in ("elapsed", "remaining", "limit")) + _MODES_HTML
 
 _PIP_CSS = f"""
-  html, body {{ margin: 0; height: 100%; background: {_CLOCK_COLOURS["panel"]}; color: {_CLOCK_COLOURS["figures"]};
-    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }}
-  body {{ display: flex; flex-direction: column; justify-content: center; gap: 1vh; overflow: hidden; }}
+  html {{ height: 100%; }}
+  body {{ {_LOOK_CSS} margin: 0; height: 100%; font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    display: flex; flex-direction: column; justify-content: center; gap: 1vh; overflow: hidden; }}
   .cell {{ display: flex; flex-direction: column; align-items: center; line-height: 1; }}
-  .label {{ font-size: min(5vw, 6vh); color: {_CLOCK_COLOURS["labels"]}; margin-bottom: 0.6vh; }}
+  .label {{ font-size: min(5vw, 6vh); margin-bottom: 0.6vh; }}
   .value {{ --scale: 1; --chars: 4; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap;
     font-size: min(calc(var(--scale) * min(19vw, 27vh)), calc(96vw / (var(--chars) * {_CHAR_EM}))); }}
   .limit .value {{ font-size: min(7vw, 9vh); font-weight: 600; }}
   .row[data-r="remaining"], .row[data-r="limit"] {{ margin-top: 3vh; }}
-  .over {{ color: {_CLOCK_COLOURS["over"]}; }}
-  .blink {{ animation: speakertime-blink {_BLINK_S}s steps(1, end) infinite; }}
-  @keyframes speakertime-blink {{ 50% {{ opacity: 0.15; }} }}
-  .modes {{ align-self: center; display: inline-flex; border: 1px solid {_CLOCK_COLOURS["labels"]}; border-radius: 6px;
+  {_SHARED_CSS}
+  .modes {{ align-self: center; display: inline-flex; border: 1px solid var(--line); border-radius: 6px;
     overflow: hidden; margin-top: 0.5vh; }}
-  .modes button {{ font: inherit; font-size: max(10px, min(3.4vw, 4.2vh)); color: {_CLOCK_COLOURS["labels"]};
+  .modes button {{ font: inherit; font-size: max(10px, min(3.4vw, 4.2vh)); color: var(--text);
     background: transparent; border: 0; padding: 0.3vh 1.6vw; cursor: pointer; }}
-  .modes button.on {{ background: {_CLOCK_COLOURS["figures"]}; color: {_CLOCK_COLOURS["panel"]}; }}
 """
 
 _HUB_JS = f"""
@@ -225,6 +275,9 @@ const CLOCK = {json.dumps(CLOCK)};
 const MINUTES = {json.dumps(MINUTES)};
 const SIZE_DEFAULT = {SIZE_DEFAULT};
 const LABELS = {json.dumps(_LABELS)};
+const THEMES = {json.dumps(_THEMES)};
+const DARK = {json.dumps(DARK)};
+const LIGHT = {json.dumps(LIGHT)};
 const PIP_HTML = {json.dumps(_PIP_HTML)};
 const PIP_CSS = {json.dumps(_PIP_CSS)};
 
@@ -277,7 +330,8 @@ const hub = () => (window.speakerTime ??= {{
       }}
     }}
     this.base = {{ sid: reading.sid, elapsed: reading.elapsed, running: reading.running, limit: reading.limit,
-                  version: reading.version, sizes: reading.sizes ?? {{}}, at }};
+                  warning: reading.warning ?? null, version: reading.version, sizes: reading.sizes ?? {{}},
+                  look: reading.look ?? null, at }};
     this.lastSync = at;
   }},
 
@@ -287,7 +341,9 @@ const hub = () => (window.speakerTime ??= {{
   // "out": Remaining shows zero or less, with a limit set (red, blinking);
   // "over": it shows less than zero (its label "Overtime" too). Both go by
   // the figures as shown, so MMM.M is out from "0.0" (Terry, 2026-11-01:
-  // "when the display is zero").
+  // "when the display is zero"). "warn": it shows no more than the Time Left
+  // Warning, and more than zero (the warning's colour); "warning" the
+  // warning's own figures (null for none).
   texts(mode) {{
     const b = this.base;
     if (b === null) return null;
@@ -296,20 +352,49 @@ const hub = () => (window.speakerTime ??= {{
     if (mode === MINUTES) {{
       const tenths = Math.floor(shown / 6);
       const limit = b.limit === null ? null : Math.round(b.limit / 6);
+      const warning = b.warning === null ? null : Math.round(b.warning / 6);
       const remaining = limit === null ? 0 : limit - tenths;
       return {{ elapsed: minutes(tenths), remaining: minutes(remaining), over: remaining < 0,
-               out: limit !== null && remaining <= 0, limit: limit === null ? "none" : minutes(limit) }};
+               out: limit !== null && remaining <= 0, limit: limit === null ? "none" : minutes(limit),
+               warn: limit !== null && warning !== null && remaining > 0 && remaining <= warning,
+               warning: warning === null ? null : minutes(warning) }};
     }}
     const remaining = b.limit === null ? 0 : b.limit - shown;
     return {{ elapsed: clock(shown), remaining: clock(remaining), over: remaining < 0,
-             out: b.limit !== null && remaining <= 0, limit: b.limit === null ? "none" : clock(b.limit) }};
+             out: b.limit !== null && remaining <= 0, limit: b.limit === null ? "none" : clock(b.limit),
+             warn: b.limit !== null && b.warning !== null && remaining > 0 && remaining <= b.warning,
+             warning: b.warning === null ? null : clock(b.warning) }};
   }},
 
-  // Draw the texts, labels and sizes into a panel or the pop-out.
+  // The session's look on a panel (the .clock element) or the pop-out (its body): the theme's colours and the timers'.
+  paint(box) {{
+    const look = this.base.look;
+    if (look === null) return;
+    const key = JSON.stringify(look);
+    if (box.dataset.look === key) return;
+    box.dataset.look = key;
+    const theme = THEMES[look.theme] ?? THEMES[DARK];
+    for (const [name, value] of Object.entries(theme)) box.style.setProperty("--" + name, value);
+    box.style.setProperty("--c-elapsed", look.elapsed);
+    box.style.setProperty("--c-remaining", look.remaining);
+    box.style.setProperty("--c-warning", look.warning);
+    box.classList.toggle("light", look.theme === LIGHT);
+    for (const group of box.querySelectorAll(".swatches")) {{
+      for (const button of group.querySelectorAll("button")) {{
+        button.classList.toggle("on", button.dataset.c === look.names[group.dataset.t]);
+      }}
+    }}
+  }},
+
+  // Draw the texts, labels, sizes and colours into a panel (root: the .clock element) or the pop-out (its document).
   draw(root, mode) {{
     const t = this.texts(mode);
     if (t === null) return;
-    for (const name of ["elapsed", "remaining", "limit"]) {{
+    this.paint(root.body ?? root);
+    const warningCell = root.querySelector("[data-w]");
+    if (warningCell !== null) warningCell.hidden = t.warning === null;
+    for (const name of ["elapsed", "remaining", "limit", "warning"]) {{
+      if (name === "warning" && t.warning === null) continue;
       const value = root.querySelector('[data-v="' + name + '"]');
       const label = root.querySelector('[data-l="' + name + '"]');
       if (label !== null) {{
@@ -324,13 +409,14 @@ const hub = () => (window.speakerTime ??= {{
         value.textContent = t[name];
         value.style.setProperty("--chars", String(Math.max(4, t[name].length)));
       }}
-      if (name !== "limit") {{
+      if (name === "elapsed" || name === "remaining") {{
         const scale = String((this.preview[name] ?? this.base.sizes[name] ?? SIZE_DEFAULT) / 100);
         if (value.style.getPropertyValue("--scale") !== scale) value.style.setProperty("--scale", scale);
       }}
       if (name === "remaining") {{
         value.classList.toggle("over", t.out);
         value.classList.toggle("blink", t.out);
+        value.classList.toggle("warn", t.warn);
       }}
     }}
     for (const button of root.querySelectorAll(".modes button")) button.classList.toggle("on", button.dataset.m === mode);
@@ -379,37 +465,40 @@ _CLOCK_HTML = (
 
 _CLOCK_CSS = f"""
 .clock {{
-  background: {_CLOCK_COLOURS["panel"]}; color: {_CLOCK_COLOURS["figures"]};
-  border-radius: 14px; padding: 14px 8px 12px;
+  {_LOOK_CSS}
+  border-radius: 14px; padding: 14px 8px 12px; box-shadow: inset 0 0 0 1px var(--line);
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 }}
 .row {{ display: grid; grid-template-columns: minmax(0, 1fr); margin-bottom: 10px; }}
-.clock.host .row {{ grid-template-columns: 30px minmax(0, 1fr) 30px; }}
+.clock.host .row {{ grid-template-columns: 56px minmax(0, 1fr) 30px 26px; }}
 .cell {{ grid-column: 1; container-type: inline-size; min-width: 0;
   display: flex; flex-direction: column; align-items: center; line-height: 1; }}
-.clock.host .cell {{ grid-column: 2; }}
+.pair {{ grid-column: 1; min-width: 0; }}
+.clock.host .row > .cell, .clock.host .pair {{ grid-column: 2; }}
 .size {{ grid-column: 3; justify-self: center; align-self: stretch; margin: 0; width: 22px; min-height: 64px;
-  writing-mode: vertical-lr; direction: rtl; accent-color: {_CLOCK_COLOURS["slider"]}; cursor: ns-resize; }}
-.size[hidden] {{ display: none; }}
-.label {{ font-size: clamp(14px, 4.6cqw, 24px); color: {_CLOCK_COLOURS["labels"]}; margin-bottom: 4px; }}
+  writing-mode: vertical-lr; direction: rtl; accent-color: {_SLIDER_COLOUR}; cursor: ns-resize; }}
+.size[hidden], .swatches[hidden] {{ display: none; }}
+.swatches {{ grid-column: 4; align-self: center; display: flex; flex-direction: column; align-items: center; gap: 5px; }}
+.swatches button {{ width: 17px; height: 17px; padding: 0; border-radius: 50%; cursor: pointer;
+  background: var(--swatch); border: 1px solid var(--line); }}
+.swatches button.on {{ outline: 2px solid var(--text); outline-offset: 2px; }}
+.label {{ font-size: clamp(14px, 4.6cqw, 24px); margin-bottom: 4px; }}
 .value {{ --scale: 1; --chars: 4; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap;
   font-size: min(calc(var(--scale) * clamp(40px, 21cqw, 150px)), calc(100cqw / (var(--chars) * {_CHAR_EM}))); }}
 .limit .value {{ font-size: clamp(22px, 7.6cqw, 54px); font-weight: 600; }}
+.limit .label {{ font-size: clamp(14px, 3.6cqw, 22px); }}
 .row[data-r="remaining"], .row[data-r="limit"] {{ margin-top: 20px; }}
-.over {{ color: {_CLOCK_COLOURS["over"]}; }}
-.blink {{ animation: speakertime-blink {_BLINK_S}s steps(1, end) infinite; }}
-@keyframes speakertime-blink {{ 50% {{ opacity: 0.15; }} }}
+{_SHARED_CSS}
 .tools {{ display: flex; justify-content: center; align-items: center; flex-wrap: wrap; gap: 8px 12px; margin-top: 4px; }}
-.modes {{ display: inline-flex; border: 1px solid {_CLOCK_COLOURS["labels"]}; border-radius: 8px; overflow: hidden; }}
-.modes button {{ font: inherit; font-size: 14px; color: {_CLOCK_COLOURS["labels"]}; background: transparent; border: 0;
+.modes {{ display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }}
+.modes button {{ font: inherit; font-size: 14px; color: var(--text); background: transparent; border: 0;
   padding: 4px 10px; cursor: pointer; }}
-.modes button.on {{ background: {_CLOCK_COLOURS["figures"]}; color: {_CLOCK_COLOURS["panel"]}; }}
 .pop {{
-  font: inherit; font-size: 14px; color: {_CLOCK_COLOURS["figures"]}; background: transparent;
-  border: 1px solid {_CLOCK_COLOURS["labels"]}; border-radius: 8px; padding: 4px 12px; cursor: pointer;
+  font: inherit; font-size: 14px; color: var(--text); background: transparent;
+  border: 1px solid var(--line); border-radius: 8px; padding: 4px 12px; cursor: pointer;
 }}
-.pop:hover {{ border-color: {_CLOCK_COLOURS["figures"]}; }}
-.note {{ font-size: 13px; color: {_CLOCK_COLOURS["labels"]}; text-align: center; margin-top: 6px; }}
+.pop:hover {{ border-color: var(--text); }}
+.note {{ font-size: 13px; text-align: center; margin-top: 6px; }}
 """
 
 _POP_OPEN = "Pop out (stays on top)"
@@ -488,6 +577,16 @@ export default function (component) {{
         h.preview[name] = Number(slider.value);
         setTriggerValue("size", {{ timer: name, percent: Number(slider.value) }});
       }});
+    }}
+    // The colour buttons beside each slider: the server applies Terry's rule for black and white.
+    for (const group of root.querySelectorAll(".swatches")) {{
+      group.hidden = false;
+      for (const button of group.querySelectorAll("button")) {{
+        button.addEventListener("click", () => {{
+          if (button.classList.contains("on")) return;
+          setTriggerValue("colour", {{ timer: group.dataset.t, colour: button.dataset.c }});
+        }});
+      }}
     }}
   }}
 
@@ -695,6 +794,46 @@ _LIMIT_HELP = (
     "Time Remaining is the Time Limit minus Elapsed Time, and goes negative once the limit is passed. "
     "Blank, 0 or a negative number: no limit, and Time Remaining stays at zero."
 )
+_WARNING_HELP = (
+    "Minutes, to one decimal place, or blank for none. Shown beside the Time Limit on every panel and pop-out. "
+    "While Time Remaining is this many minutes or fewer, and more than zero, it takes the warning's colour. "
+    "The buttons on the right set that colour: the first, A, is green (or, when Time Remaining is in a colour, "
+    "the colour opposite it); the others are four more."
+)
+
+# The warning's colour buttons (``Shown.warning_buttons``), beside its box on the host's page: laid out again at each run.
+_PICKER_HTML = (
+    '<div class="picks-box"><div class="picks-label">Warning colour</div>'
+    '<div class="picks" role="group" aria-label="Colour of the Time Left Warning"></div></div>'
+)
+_PICKER_CSS = """
+.picks-box { font-family: "Source Sans Pro", "Source Sans 3", system-ui, sans-serif; }
+.picks-label { font-size: 14px; line-height: 1.6; margin-bottom: 0.5rem; }
+.picks { display: flex; align-items: center; gap: 7px; height: 2.5rem; }
+.picks button { width: 22px; height: 22px; padding: 0; border-radius: 50%; cursor: pointer; background: var(--swatch);
+  border: 1px solid #9ca3af; font: 600 11px system-ui, sans-serif; color: #000; }
+.picks button.on { outline: 2px solid #31333f; outline-offset: 2px; }
+"""
+_PICKER_JS = """
+export default function (component) {
+  const { data, parentElement, setTriggerValue } = component;
+  const row = parentElement.querySelector(".picks");
+  row.replaceChildren();
+  for (const [name, hex] of data.buttons) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.dataset.c = name;
+    button.title = name === data.auto ? "A: green, or the colour opposite Time Remaining's" : name[0].toUpperCase() + name.slice(1);
+    button.setAttribute("aria-label", button.title);
+    button.style.setProperty("--swatch", hex);
+    button.classList.toggle("on", name === data.chosen);
+    if (name === data.auto) button.textContent = "A";
+    button.addEventListener("click", () => { if (name !== data.chosen) setTriggerValue("pick", name); });
+    row.appendChild(button);
+  }
+}
+"""
+
 _COOKIE_NOTE = (
     "This page keeps small cookies in your browser: the sessions you were in, the host key of a session you hosted, "
     "and a random id for this browser, so that a reload or a return reconnects you. Leave Session forgets the session."
@@ -773,6 +912,7 @@ def _enter(sid: str, checked: Checked) -> None:
             _tokens()[sid] = checked.token
         host = (sid, token) if token else None
         state[_LIMIT_BOX] = checked.shown.limit
+        state[_WARN_BOX] = checked.shown.warning
     _cookie_change(sid, first=sid, host=host)
 
 
@@ -1016,6 +1156,36 @@ def _size_changed() -> None:
         _notify("error", f"The size was not changed: {problem}.")
 
 
+def _colour_changed() -> None:
+    """The host has pressed a colour button beside a slider: that timer's colour, for every panel and pop-out."""
+    sent = _clock_sent("colour")
+    try:
+        if not isinstance(sent, dict):
+            raise ValueError(f"not a colour: {sent!r}")
+        REGISTRY.set_colour(st.session_state.get(_SID), _page(), sent.get("timer"), sent.get("colour"))
+    except Refused as refusal:
+        _notify("error", str(refusal))
+    except ValueError as problem:
+        _notify("error", f"The colour was not changed: {problem}.")
+
+
+def _warning_changed() -> None:
+    warning = limit_minutes(st.session_state.get(_WARN_BOX))
+    st.session_state[_WARN_BOX] = warning  # shown as it is used: to a tenth
+    _control("warning", warning)
+
+
+def _warning_colour_picked() -> None:
+    """The host has pressed one of the warning's colour buttons."""
+    choice = (st.session_state.get(_PICKER) or {}).get("pick")
+    try:
+        REGISTRY.set_warning_colour(st.session_state.get(_SID), _page(), choice)
+    except Refused as refusal:
+        _notify("error", str(refusal))
+    except ValueError as problem:
+        _notify("error", f"The warning's colour was not changed: {problem}.")
+
+
 def _assume_host() -> None:
     sid = st.session_state.get(_SID)
     try:
@@ -1090,18 +1260,29 @@ def _session_screen(sid: str, checked: Checked) -> None:
     st.fragment(_live, run_every=datetime.timedelta(seconds=CHECK_IN_S))(sid, role)
     clock = st.components.v2.component("speakertime_clock", html=_CLOCK_HTML, css=_CLOCK_CSS, js=_CLOCK_JS)
     data = {"sid": sid, **checked.shown.for_script(), "mode": _mode() or checked.shown.host_mode, "host": role == HOST}
-    clock(key=_CLOCK, data=data, on_mode_change=_mode_changed, on_size_change=_size_changed)
+    clock(key=_CLOCK, data=data, on_mode_change=_mode_changed, on_size_change=_size_changed, on_colour_change=_colour_changed)
     if role == HOST:
         _host_controls(checked.shown)
     st.button("Leave Session", on_click=_leave)
 
 
 def _host_controls(shown: Shown) -> None:
+    """The Time Limit, and to its right the Time Left Warning and its colour buttons (Terry, 2026-11-01); Start, Stop and Reset."""
     st.session_state.setdefault(_LIMIT_BOX, shown.limit)
-    st.number_input(
+    st.session_state.setdefault(_WARN_BOX, shown.warning)
+    row = st.container(horizontal=True, vertical_alignment="bottom", wrap=True)
+    row.number_input(
         "Time Limit (minutes)", key=_LIMIT_BOX, min_value=None, step=1.0, format="%.1f",
-        help=_LIMIT_HELP, placeholder="Blank: no limit", on_change=_limit_changed,
+        help=_LIMIT_HELP, placeholder="Blank: no limit", on_change=_limit_changed, width=200,
     )
+    row.number_input(
+        "Time Left Warning (minutes)", key=_WARN_BOX, min_value=None, step=1.0, format="%.1f",
+        help=_WARNING_HELP, placeholder="Blank: none", on_change=_warning_changed, width=220,
+    )
+    buttons, chosen = shown.warning_buttons()
+    picker = st.components.v2.component("speakertime_warn_colours", html=_PICKER_HTML, css=_PICKER_CSS, js=_PICKER_JS)
+    with row:
+        picker(key=_PICKER, data={"buttons": buttons, "chosen": chosen, "auto": AUTO}, on_pick_change=_warning_colour_picked)
     row = st.container(horizontal=True)
     # A button that would do nothing is greyed (ratesplot's rule: grey what has no effect).
     row.button("Start", on_click=_control, args=("start",), disabled=shown.running, type="primary")
