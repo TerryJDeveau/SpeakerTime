@@ -5,8 +5,9 @@ session's life through: waiting for a session not yet created, a taken ID,
 the timers agreeing on every screen, reloads, the host's window closed and
 "Assume Host Role?", a creator who comes back, Leave Session, the pop-out
 window, the pop-ups offered while another tab of the browser has it, a
-tab holding an earlier version's state, the host's Buzzer, and the page
-fitted to its window on connecting.
+tab holding an earlier version's state, the host's Buzzer, the page fitted
+to its window on connecting, the host's line in a pop-out or pop-up, and a
+link that connects by itself.
 Prints each check and exits 1 on any failure.
 
 Needs Playwright (``pip install playwright``) and a Chromium: ``--chrome``
@@ -411,6 +412,8 @@ def run(url: str, launch: dict, shots: Path | None) -> None:
         buzzer_held(browser, errors, shot)
         buzzer_silent(browser, errors)
         fitted_to_the_window(browser, errors, shot)
+        host_line_in_popout(browser, errors, shot)
+        join_link(browser, errors)
 
         ok("no script errors on any page", not errors, errors)
         browser.close()
@@ -1016,7 +1019,7 @@ def buzzer_held(browser, errors: list[str], shot) -> None:
     viewer.context.close()
 
 
-_SILENT_TEXT = "No buzzer sound on this page."
+_SILENT_TEXT = "(silent)"
 
 
 def buzzer_silent(browser, errors: list[str]) -> None:
@@ -1181,6 +1184,219 @@ def fitted_to_the_window(browser, errors: list[str], shot) -> None:
 
 
 _HAS_FIT = f"const h = window.speakerTime; return h && h.fitting === null && h.entered !== null && ({_HAS_CLOCK})()"
+
+# The line under a pop-out's or pop-up's timers: the switch's labels, each button's text and whether it is greyed (null
+# while hidden), whether the Buzzer shows held, whether all of it stands on one row, and whether it is inside the window.
+_LINE_SEEN = """() => {
+  const q = (s) => document.querySelector(s);
+  const state = (s) => q(s).hidden ? null : [q(s).textContent, q(s).disabled];
+  const boxes = [...document.querySelectorAll('.modes, .bar > button')].filter(e => !e.hidden).map(e => e.getBoundingClientRect());
+  const middles = boxes.map(b => (b.top + b.bottom) / 2), bar = q('.bar').getBoundingClientRect();
+  return { modes: [...document.querySelectorAll('.modes button')].map(b => b.textContent), buzz: state('.buzz'),
+           start: state('[data-a="start"]'), stop: state('[data-a="stop"]'), reset: state('[data-a="reset"]'),
+           held: q('.buzz').classList.contains('on'), oneRow: Math.max(...middles) - Math.min(...middles) <= 2,
+           inside: bar.left >= -0.5 && bar.top >= -0.5 && bar.right <= innerWidth + 0.5 && bar.bottom <= innerHeight + 0.5 };
+}"""
+
+
+def host_line_in_popout(browser, errors: list[str], shot) -> None:
+    """22. The host's line in a pop-out or pop-up: its switch, Buzz, Start or Restart, Stop and Reset (Terry, 2026-11-03: a single monitor, Zoom maximized)."""
+    def connected(context, sid: str, create: bool) -> Page:
+        page = context.new_page()
+        page.on("pageerror", lambda error: errors.append(f"line: {error}"))
+        page.goto(profile_url)
+        page.locator('[data-testid="stApp"]').wait_for()
+        page.wait_for_timeout(1500)
+        id_box(page).fill(sid)
+        button(page, "Create New Session" if create else "Connect to Session").click()
+        page.get_by_text("You are the host." if create else "You are viewing it.").wait_for(timeout=8000)
+        page.wait_for_timeout(800)
+        return page
+
+    def popped_from(page: Page) -> Page:
+        with page.context.expect_page(timeout=5000) as popped:
+            on_clock(page, _CLICK_POP)
+        popped.value.on("pageerror", lambda error: errors.append(f"line, its window: {error}"))
+        page.wait_for_timeout(1000)
+        return popped.value
+
+    size = {"width": 800, "height": 1300}
+    host_context = browser.new_context(viewport=size)
+    host, viewer = connected(host_context, "LIMA", True), connected(browser.new_context(viewport=size), "LIMA", False)
+    # One pop-out at a time, whatever the browser's contexts (web._POP_LOCK): the viewer's first, closed for the host's.
+    viewer_pip = popped_from(viewer)
+    seen = viewer_pip.evaluate(_LINE_SEEN)
+    ok("a viewer's pop-out: the switch alone", (seen["modes"], seen["buzz"], seen["start"], seen["stop"], seen["reset"])
+       == (["H:M:S", "Min"], None, None, None, None), seen)
+    viewer_pip.close()
+    viewer.wait_for_timeout(1500)
+    pip = popped_from(host)
+    seen = pip.evaluate(_LINE_SEEN)
+    ok("the host's pop-out: one line of H:M:S|Min, Buzz, Start, Stop and Reset, inside its window, Stop and Reset greyed",
+       (seen["modes"], seen["buzz"], seen["start"], seen["stop"], seen["reset"], seen["oneRow"], seen["inside"])
+       == (["H:M:S", "Min"], ["Buzz", False], ["Start", False], ["Stop", True], ["Reset", True], True, True), seen)
+    shot(pip, "15-popout-line.png")
+
+    def line(key: str) -> object:
+        return pip.evaluate(_LINE_SEEN)[key]
+
+    # The timer's buttons: each as the page's own, the page's agreeing, the viewer following.
+    pip.locator('[data-a="start"]').click()
+    seen = settled(lambda: [line("start"), line("stop"), line("reset")], [["Restart", True], ["Stop", False], ["Reset", False]], 3.0)
+    ok("Start in the pop-out: running, Start reading Restart and greyed, Stop and Reset live", seen == [["Restart", True], ["Stop", False], ["Reset", False]], seen)
+    ok("and the page's own buttons agree", settled(lambda: button(host, "Restart").is_disabled(), True, 3.0) is True)
+    viewer.wait_for_timeout(2200)
+    ok("and the viewer's timers run", clock(viewer)["elapsed"] not in ("0:00", None), clock(viewer))
+    pip.locator('[data-a="stop"]').click()
+    seen = settled(lambda: [line("start"), line("stop")], [["Restart", False], ["Stop", True]], 3.0)
+    ok("Stop in the pop-out: stopped, Restart live, Stop greyed", seen == [["Restart", False], ["Stop", True]], seen)
+    pip.locator('[data-a="reset"]').click()
+    seen = settled(lambda: [line("start"), line("reset")], [["Start", False], ["Reset", True]], 3.0)
+    ok("Reset in the pop-out: Start again, Reset greyed, zero everywhere",
+       seen == [["Start", False], ["Reset", True]] and settled(lambda: clock(viewer)["elapsed"], "0:00", 3.0) == "0:00" and clock(host)["elapsed"] == "0:00", seen)
+    seen = pip.locator('[data-a="start"]').bounding_box()["width"]
+    pip.locator('[data-a="start"]').click()
+    settled(lambda: line("start"), ["Restart", True], 3.0)
+    ok("Start's button no wider as Restart: the window does not jump", abs(pip.locator('[data-a="start"]').bounding_box()["width"] - seen) <= 1,
+       [seen, pip.locator('[data-a="start"]').bounding_box()["width"]])
+    pip.locator('[data-a="stop"]').click()
+    settled(lambda: line("stop"), ["Stop", True], 3.0)
+
+    def everywhere() -> list[str]:
+        return [clock(host)["remaining"], pip.locator('[data-v="remaining"]').text_content(), clock(viewer)["remaining"]]
+
+    def sounding(page: Page) -> bool:
+        return on_clock(page, _BUZZ_SEEN)["sounding"]
+
+    # The Buzzer: held in the pop-out, the page behind it having lost the focus to it.
+    box = pip.locator(".buzz").bounding_box()
+    pip.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+    pip.mouse.down()
+    ok("Buzz held in the pop-out: shown held, BUZZ everywhere within 2.5 s", settled(everywhere, ["BUZZ"] * 3, 2.5) == ["BUZZ"] * 3 and line("held") is True, everywhere())
+    seen = settled(lambda: [sounding(host), sounding(viewer)], [True, True], 1.0)
+    ok("the buzzer sounds on the host's page and the viewer's", seen == [True, True], seen)
+    host.evaluate("window.dispatchEvent(new Event('blur'))")
+    host.wait_for_timeout(300)
+    ok("the page behind losing the focus does not let go: its pop-out holds it", line("held") is True and sounding(host) is True)
+    began = time.monotonic()
+    pip.wait_for_timeout((BUZZ_HOLD_S + 2) * 1000)
+    ok(f"held {BUZZ_HOLD_S + 2:.0f} s in the pop-out: still BUZZ everywhere (said again from its own timer)", everywhere() == ["BUZZ"] * 3, [everywhere(), f"{time.monotonic() - began:.1f} s"])
+    pip.mouse.up()
+    seen = [line("held"), sounding(host)]
+    ok("let go in the pop-out: the button shows it, and the host's page's sound stops at once", seen == [False, False], seen)
+    seen = settled(lambda: [t != "BUZZ" for t in everywhere()] + [sounding(viewer)], [True, True, True, False], 2.5)
+    ok("and the time again everywhere within 2.5 s, the viewer's sound stopped", seen == [True, True, True, False], [everywhere(), seen])
+    pip.locator(".buzz").focus()
+    pip.keyboard.down("Space")
+    ok("held by Space in the pop-out: BUZZ at the viewer's", settled(lambda: clock(viewer)["remaining"], "BUZZ", 2.5) == "BUZZ", clock(viewer))
+    pip.keyboard.up("Space")
+    ok("Space let go: the time again", settled(lambda: clock(viewer)["remaining"] != "BUZZ", True, 2.5) is True, clock(viewer))
+    # The pop-out closed with the button down: let go, as with the host's page closed.
+    box = pip.locator(".buzz").bounding_box()
+    pip.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+    pip.mouse.down()
+    settled(lambda: clock(viewer)["remaining"], "BUZZ", 2.5)
+    pip.close()
+    ok("the pop-out closed while held: let go within 2.5 s", settled(lambda: clock(viewer)["remaining"] != "BUZZ", True, 2.5) is True, clock(viewer))
+
+    # A pop-up has the same line: another tab of the browser, its pop-out taken by this one; and a tab reloaded takes it back.
+    pip = popped_from(host)
+    other = connected(host_context, "MIKE", True)
+    other.wait_for_timeout(1500)
+    popup = popped_from(other)
+    seen = popup.evaluate(_LINE_SEEN)
+    ok("a pop-up the same line", (seen["modes"], seen["buzz"], seen["start"], seen["oneRow"]) == (["H:M:S", "Min"], ["Buzz", False], ["Start", False], True), seen)
+    popup.locator('[data-a="start"]').click()
+    ok("Start in the pop-up: running", settled(lambda: popup.evaluate(_LINE_SEEN)["start"], ["Restart", True], 3.0) == ["Restart", True], popup.evaluate(_LINE_SEEN))
+    other.reload()
+    other.get_by_text("You are the host.").wait_for(timeout=8000)
+    other.wait_for_timeout(1500)
+    popup.locator('[data-a="stop"]').click()
+    ok("its tab reloaded and the pop-up taken back: its buttons still work",
+       settled(lambda: popup.evaluate(_LINE_SEEN)["stop"], ["Stop", True], 4.0) == ["Stop", True], popup.evaluate(_LINE_SEEN))
+    popup.close()
+    other.close()
+
+    # A viewer made host gains the line in the pop-out it already has.
+    pip.close()
+    host.close()
+    viewer.wait_for_timeout(1500)
+    viewer_pip = popped_from(viewer)
+    button(viewer, "Yes").wait_for(timeout=(HOST_GRACE_S + 10) * 1000)
+    button(viewer, "Yes").click()
+    viewer.get_by_text("You are the host.").wait_for(timeout=5000)
+    seen = settled(lambda: (viewer_pip.evaluate(_LINE_SEEN)["buzz"]), ["Buzz", False], 3.0)
+    ok("a viewer made host: its pop-out gains the host's line", seen == ["Buzz", False], viewer_pip.evaluate(_LINE_SEEN))
+    host_context.close()
+    viewer.context.close()
+
+
+def join_link(browser, errors: list[str]) -> None:
+    """23. A link that connects by itself: ``?session=ID`` (Terry, 2026-11-03), with ``&silent`` if wanted."""
+    def opened(address: str, context=None) -> Page:
+        page = (context or browser.new_context(viewport={"width": 700, "height": 1300})).new_page()
+        page.on("pageerror", lambda error: errors.append(f"link: {error}"))
+        page.goto(profile_url + address)
+        return page
+
+    host = opened("")
+    host.locator('[data-testid="stApp"]').wait_for()
+    host.wait_for_timeout(1500)
+    id_box(host).fill("NOVEMBER")
+    button(host, "Create New Session").click()
+    host.get_by_text("You are the host.").wait_for(timeout=8000)
+
+    # A speaker's page opened from a link: nothing typed or clicked. It may not sound until clicked, and says so.
+    speaker = browser.new_context(viewport={"width": 700, "height": 1300}).new_page()
+    speaker.on("pageerror", lambda error: errors.append(f"link: {error}"))
+    read = quiet(speaker)
+    speaker.goto(profile_url + "?session=november")
+    seen = settled(lambda: read("document.body.innerText.includes('You are viewing it.')"), True, 10.0)
+    ok("a link to a running session: the page connected, as a viewer, nothing typed", seen is True, seen)
+    seen = settled(lambda: (read(_BUZZ_SEEN) or {}).get("note"), _BUZZ_NOTE, 5.0)
+    ok("and says that it must be clicked once before it can sound", seen == _BUZZ_NOTE, seen)
+    speaker.context.close()
+
+    # With the switch too; Leave Session then takes the session out of the address and keeps the switch.
+    linked = opened("?session=NOVEMBER&silent")
+    linked.get_by_text("You are viewing it.").wait_for(timeout=10000)
+    ok("a link with the switch too: connected, and silent", _SILENT_TEXT in main_text(linked))
+    button(linked, "Leave Session").click()
+    button(linked, "Connect to Session").wait_for()
+    settled(lambda: "session=" in linked.url, False, 3.0)
+    ok("Leave Session: the session out of the address, the switch kept", "session=" not in linked.url and "silent" in linked.url, linked.url)
+    linked.reload()
+    button(linked, "Connect to Session").wait_for(timeout=10000)
+    linked.wait_for_timeout(1500)
+    ok("and a reload stays on the start screen", "You are viewing it." not in main_text(linked), main_text(linked)[:80])
+    linked.context.close()
+
+    # The host's own browser, its host's page open: the link makes a viewer; no second host.
+    own = opened("?session=NOVEMBER", host.context)
+    own.get_by_text("You are viewing it.").wait_for(timeout=10000)
+    ok("a link opened in the browser hosting that session, its host's page open: a viewer", "You are the host." in main_text(host))
+    own.close()
+
+    # A session not yet created: it waits, and joins by itself; Cancel takes it out of the address.
+    waiting = opened("?session=OSCAR")
+    waiting.get_by_text("Please wait, connection pending").wait_for(timeout=10000)
+    ok("a link to a session not yet created: waiting for it", True)
+    creator = opened("")
+    creator.locator('[data-testid="stApp"]').wait_for()
+    creator.wait_for_timeout(1500)
+    id_box(creator).fill("OSCAR")
+    button(creator, "Create New Session").click()
+    waiting.get_by_text("You are viewing it.").wait_for(timeout=5000)
+    ok("once it is created: joined by itself", True)
+    creator.context.close()
+    waiting.context.close()
+    cancelled = opened("?session=PAPA")
+    button(cancelled, "Cancel").click(timeout=10000)
+    button(cancelled, "Connect to Session").wait_for()
+    settled(lambda: "session=" in cancelled.url, False, 3.0)
+    ok("Cancel: the session out of the address", "session=" not in cancelled.url, cancelled.url)
+    cancelled.context.close()
+    host.context.close()
 
 profile_url = ""
 """The page's address, for windows_of_one_browser, popups_of_one_browser and buzzer_held (set by run)."""

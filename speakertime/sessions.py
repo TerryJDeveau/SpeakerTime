@@ -127,12 +127,12 @@ REMEMBER_FILE = Path(os.environ.get("SPEAKERTIME_REMEMBER") or Path(__file__).re
 REMOTE_RETRY_S = 60.0
 """After the gist could not be read, the soonest ``Registry.use_remote`` tries it again."""
 
-BUZZ_HOLD_S = 15.0
-"""A Buzzer held stops by itself this long after the host's page last said it was held.
+BUZZ_HOLD_S = 8.0
+"""A Buzzer held stops by itself this long after the host's page last said it was held (Terry, 2026-11-03: 8 s, 15 until then).
 
 So a page that closes or loses its connection with the button down cannot
 leave it sounding. While the button is held the page says so again every
-5 s (``web``), so a hold of any length goes on.
+third of this (``web._BUZZ_RESEND_MS``), so a hold of any length goes on.
 """
 
 

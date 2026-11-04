@@ -217,7 +217,37 @@ def main() -> int:
     check("a page whose address says silent says so", ("You are the host." in texts(s), web._SILENT_TEXT in texts(s)), (True, True))
     check("a page whose address does not, does not", web._SILENT_TEXT in texts(r), False)
 
-    for at_ in (a, b, b2, c, d, e, legacy, other, f, g, w, hst, t, r, s):
+    # A link naming a session (v1.15, Terry, 2026-11-03): as Connect to Session, with nothing typed.
+    for params, expected in (({}, None), ({"session": "ROOM5"}, "ROOM5"), ({"-Session": "room 5"}, "room 5"), ({"session": "  "}, None), ({"sound": "x"}, None)):
+        check(f"session_asked({params})", web.session_asked(params), expected)
+
+    def linked(address: dict, heard: dict) -> AppTest:
+        at = AppTest.from_file(str(ROOT / "streamlit_app.py"), default_timeout=30)
+        for name, value in address.items():
+            at.query_params[name] = value
+        at.session_state[web._HEARD] = heard
+        return at.run()
+
+    l1 = linked({"session": "second", "silent": "1"}, sent(browser="browserK1"))
+    check("a link to a running session: viewing it, nothing typed, silent too",
+          (l1.session_state[web._SID], "You are viewing it." in texts(l1), web._SILENT_TEXT in texts(l1)), ("SECOND", True, True))
+    button(l1, "Leave Session").click().run()
+    check("Leave Session takes the session out of the address, the rest kept",
+          ("session" in l1.query_params, "silent" in l1.query_params, l1.session_state[web._SCREEN]), (False, True, "start"))
+    l2 = linked({"session": "not yet"}, sent(browser="browserK2"))
+    check("a link to a session not yet created: waiting for it", "Please wait, connection pending" in texts(l2), True)
+    button(l2, "Cancel").click().run()
+    check("Cancel takes it out of the address too", ("session" in l2.query_params, l2.text_input(key=web._BOX).value), (False, "NOTYET"))
+    l3 = linked({"session": "%%%"}, sent(browser="browserK3"))
+    check("a link with nothing usable: refused, on the start screen", any("can be part of a session ID" in x.value for x in l3.error), True)
+    l4 = linked({"session": "x" * 100}, sent(browser="browserK4"))
+    check("a link too long: refused, on the start screen", any("at most 20" in x.value for x in l4.error), True)
+    l5 = linked({"session": "second"}, sent(tab="SECOND", browser="browserK5"))
+    check("a reload of a tab already in the link's session: reconnected", "Reconnected to session SECOND" in texts(l5), True)
+    l6 = linked({"session": "second"}, sent(tab=sid, browser="browserK6"))
+    check("a link to another session than the tab's: the link's", l6.session_state[web._SID], "SECOND")
+
+    for at_ in (a, b, b2, c, d, e, legacy, other, f, g, w, hst, t, r, s, l1, l2, l3, l4, l5, l6):
         check("no exception", [x.value for x in at_.exception], [])
 
     for failure in FAILURES:

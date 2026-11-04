@@ -58,6 +58,16 @@ which can lay the clock out again under the finger. A browser lets a page
 sound only once it has been clicked or a key pressed on it since it loaded,
 so a viewer's page that reconnected by itself (a reload) says so under its
 clock until it is clicked; the host's press of the button is itself a click.
+A host's pop-out or pop-up has the Buzzer too, on a line with its switch and
+Start, Stop and Reset (Terry, 2026-11-03, v1.15), so that a host can run the
+session without leaving a maximized window on a single monitor (``_PIP_HTML``,
+``openWindow``).
+
+A link that connects by itself (Terry, 2026-11-03, v1.15)
+---------------------------------------------------------
+A page whose address says ``?session=ROOM5`` connects as Connect to Session
+does, at the visit's start (``session_asked``). Leave Session and Cancel take it
+out of the address, so that a reload does not go back.
 
 Fitted to the window on connecting (Terry, 2026-11-03)
 ------------------------------------------------------
@@ -303,8 +313,17 @@ _SILENT_SWITCH = "silent"
 """The word in a page's address that stops its buzzer sounding: ``?silent`` (Terry, 2026-11-03: "-silent or something like that", so ``?-silent`` too)."""
 _SILENT_OFF = {"0", "false", "no", "off"}
 """A value of the switch that says not silent after all (``?silent=no``)."""
-_SILENT_TEXT = "No buzzer sound on this page."
-"""Beside the role on a page whose address says silent, so that its silence is not taken for a fault."""
+_SILENT_TEXT = "(silent)"
+"""After the role on a page whose address says silent, so that its silence is not taken for a fault (Terry, 2026-11-03: this short)."""
+_SESSION_SWITCH = "session"
+"""The word in a page's address that connects it to a session by itself: ``?session=ROOM5`` (Terry, 2026-11-03)."""
+_START = "Start"
+_RESTART = "Restart"
+"""The Start button's label once the timer has run (Elapsed not zero), running or stopped: Start goes on from there."""
+_POP_BUZZ = "Buzz"
+"""The Buzzer's label on the host's line in a pop-out or pop-up (Terry, 2026-11-03)."""
+_POP_CONTROLS = {"start": _START, "stop": "Stop", "reset": "Reset"}
+"""The timer's buttons on the host's line in a pop-out or pop-up, by what each asks ``sessions.Registry.control`` to do."""
 
 _BUZZ_RESEND_MS = round(BUZZ_HOLD_S * 1000 / 3)
 """While the Buzzer is held, the host's page says so again this often: the server stops it after BUZZ_HOLD_S without word."""
@@ -331,9 +350,17 @@ _LABELS = {
 }
 """The labels in each way of showing the times; "overtime" is Remaining's while it is negative."""
 
-_MODES_HTML = '<div class="modes" role="group" aria-label="Show the times as">' + "".join(
-    f'<button type="button" data-m="{mode}">{name}</button>' for mode, name in _MODE_NAMES.items()
-) + "</div>"
+_POP_MODE_NAMES = {CLOCK: "H:M:S", MINUTES: "Min"}
+"""The switch's two buttons in a pop-out or pop-up, shorter, so that the host's whole line fits on one row (Terry, 2026-11-03)."""
+
+
+def _modes_html(names: dict[str, str]) -> str:
+    return '<div class="modes" role="group" aria-label="Show the times as">' + "".join(
+        f'<button type="button" data-m="{mode}">{name}</button>' for mode, name in names.items()
+    ) + "</div>"
+
+
+_MODES_HTML = _modes_html(_MODE_NAMES)
 
 
 def _cell(name: str, extra: str = "") -> str:
@@ -395,10 +422,15 @@ _SHARED_CSS = f"""
 _GONE_TEXT = "Its SpeakerTime tab has gone: close this window."
 """Shown in a pop-up instead of the figures once its tab has stopped drawing them (closed, or reloaded and not back)."""
 
-# The timers, the Time Limit and the switch at the panel's sizes on a computer (the stage), scaled as a whole to
-# fit the window by the script (--z, hub.fitPip).
+# The timers, the Time Limit and a line under them at the panel's sizes on a computer (the stage), scaled as a whole to
+# fit the window by the script (--z, hub.fitPip). The line holds the switch and, for the host alone (data-host), the
+# Buzzer and the timer's buttons, so that a host can run the session from the window kept on top, without leaving a
+# maximized Zoom window on a single monitor (Terry, 2026-11-03).
 _PIP_HTML = (
-    '<div class="stage">' + _row("elapsed", False) + _row("remaining", False) + _row("limit", False) + _MODES_HTML + "</div>"
+    '<div class="stage">' + _row("elapsed", False) + _row("remaining", False) + _row("limit", False)
+    + f'<div class="bar">{_modes_html(_POP_MODE_NAMES)}<button class="buzz" type="button" data-host hidden>{_POP_BUZZ}</button>'
+    + "".join(f'<button type="button" data-a="{action}" data-host hidden>{label}</button>' for action, label in _POP_CONTROLS.items())
+    + "</div></div>"
     + f'<div class="gone-note">{_GONE_TEXT}</div>'
 )
 
@@ -418,10 +450,16 @@ _PIP_CSS = f"""
   .row[data-r="remaining"], .row[data-r="limit"] {{ margin-top: 20px; }}
   {_SHARED_CSS}
   .pair .cell + .cell {{ margin-left: 44px; }}
-  .modes {{ display: flex; width: max-content; margin: 4px auto 0; border: 1px solid var(--line); border-radius: 8px;
-    overflow: hidden; }}
+  .bar {{ display: flex; align-items: center; gap: 8px; width: max-content; margin: 4px auto 0; white-space: nowrap; }}
+  .modes {{ display: flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }}
   .modes button {{ font: inherit; font-size: 14px; color: var(--text); background: transparent; border: 0;
     padding: 4px 10px; cursor: pointer; }}
+  .bar > button {{ font: inherit; font-size: 14px; color: var(--text); background: transparent;
+    border: 1px solid var(--line); border-radius: 8px; padding: 4px 12px; cursor: pointer; }}
+  .bar > button:disabled {{ opacity: 0.35; cursor: default; }}
+  .bar > .buzz {{ border-color: var(--over); touch-action: none; user-select: none; -webkit-user-select: none; }}
+  .bar > .buzz.on {{ background: var(--over); color: var(--panel); }}
+  .bar > [data-a="start"]::before {{ content: "{_RESTART}"; display: block; height: 0; overflow: hidden; visibility: hidden; }}
   .gone-note {{ display: none; font-size: max(14px, min(5vw, 7vh)); text-align: center; padding: 0 5vw; }}
   body.gone {{ display: flex; flex-direction: column; justify-content: center; }}
   body.gone .stage {{ display: none; }}
@@ -530,6 +568,8 @@ const WATCH_JS = {json.dumps(_WATCH_JS)};
 const POPUP_KEY = {json.dumps(POPUP_KEY)};
 const BUZZ_TEXT = {json.dumps(_BUZZ_TEXT)};
 const BUZZ = {json.dumps(_BUZZ_SOUND)};
+const START = {json.dumps(_START)};
+const RESTART = {json.dumps(_RESTART)};
 
 // Whole seconds as a clock shows them: "4:05", "1:02:03", a minus sign before
 // a negative time. As timer.clock_text.
@@ -584,6 +624,8 @@ const hub = () => (window.speakerTime ??= {{
   listening: false, // the page's own listeners for the Buzzer are added (_CLOCK_JS, listen)
   buzzHeld: false,  // the host's Buzzer is held on this page
   buzzBy: null,     // held by "pointer" or "key"
+  buzzWin: null,    // the window it is held in: the page's, or its pop-out's or pop-up's
+  keepBuzz: null,   // says again that it is held (_CLOCK_JS, listen): the pop-out's timer runs while the page behind it is slowed
   buzzWant: null,   // what this page last sent of it: true held, false let go; null for nothing
   buzzSentAt: -Infinity,  // when it last sent it (performance.now())
   buzzSend: null,   // sends it (the latest sync element's trigger)
@@ -801,11 +843,30 @@ const hub = () => (window.speakerTime ??= {{
     if (stage.style.getPropertyValue("--z") !== z) stage.style.setProperty("--z", z);
   }},
 
+  // The host's line in a pop-out or pop-up: shown on the host's page alone (a
+  // viewer made host gains it), its buttons as the page's are: greyed where
+  // they would do nothing, Start reading Restart once the timer has run.
+  drawBar(doc) {{
+    const host = this.host === true, b = this.base;
+    for (const button of doc.querySelectorAll("[data-host]")) {{
+      if (button.hidden === host) button.hidden = !host;
+    }}
+    if (!host || b === null) return;
+    const start = doc.querySelector('[data-a="start"]');
+    const label = b.running || b.elapsed > 0 ? RESTART : START;
+    if (start.textContent !== label) start.textContent = label;
+    start.disabled = b.running;
+    doc.querySelector('[data-a="stop"]').disabled = !b.running;
+    doc.querySelector('[data-a="reset"]').disabled = !b.running && b.elapsed === 0;
+    doc.querySelector(".buzz").classList.toggle("on", this.buzzHeld);
+  }},
+
   // The pop-out (popup false), or a plain pop-up (true): drawn and timed from
   // its own window, with its own switch, starting at the panel's choice. The
   // pop-out stays on top; a pop-up does not, and outlives its tab, so it has
   // a watchdog of its own (_WATCH_JS), and a tab reloaded takes it back
-  // (adopt): laid out again here, its old style replaced.
+  // (adopt): laid out again here, its old style replaced. The host's line is
+  // wired by the clock's script, which holds the Buzzer's code (openWindow).
   openPip(win, popup) {{
     const h = this;
     h.pipMode = h.pageMode;
@@ -832,7 +893,9 @@ const hub = () => (window.speakerTime ??= {{
       win.speakerTimeBeat = Date.now();
       doc.body.classList.remove("gone");
       h.draw(doc, h.pipMode);
+      h.drawBar(doc);
       h.fitPip(win, doc);
+      h.keepBuzz?.();
       const now = performance.now();
       if (h.kick !== null && now - h.lastSync > KICK_AFTER_MS && now - h.lastKick > KICK_AFTER_MS) {{
         h.lastKick = now;
@@ -930,9 +993,6 @@ _CLOCK_CSS = f"""
 .note, .why, .buzz-note {{ font-size: 13px; text-align: center; margin-top: 6px; contain: inline-size; }}
 """
 
-_START = "Start"
-_RESTART = "Restart"
-"""The Start button's label once the timer has run (Elapsed not zero), running or stopped: Start goes on from there."""
 _POP_OPEN = "Pop out (stays on top)"
 _POP_CLOSE = "Close the pop-out"
 _POPUP_OPEN = "Pop-up (may get obscured)"
@@ -1130,16 +1190,18 @@ const sendBuzz = (h) => {{
   try {{ h.buzzSend?.(h.buzzWant); }} catch (error) {{}}  // the element that gave it is gone: sent again (keepBuzz)
 }};
 
-// The Buzzer held (by "pointer" or "key") or let go (null): shown on this
-// panel at once, and sent.
-const hold = (h, by) => {{
+// The Buzzer held (by "pointer" or "key", in window ``win``) or let go (null):
+// shown on this panel at once, and sent.
+const hold = (h, by, win = null) => {{
   const on = by !== null;
   if (on === h.buzzHeld) return;
   h.buzzHeld = on;
   h.buzzBy = by;
+  h.buzzWin = win;
   h.buzzWant = on;
   sendBuzz(h);
   drawPanel(h);
+  if (h.pip !== null) h.drawBar(h.pip.document);
 }};
 
 // While it is held, said again every BUZZ_RESEND_MS (the server stops it
@@ -1152,21 +1214,54 @@ const keepBuzz = (h) => {{
   if ((h.buzzHeld && since > BUZZ_RESEND_MS) || (disagrees && since > BUZZ_CHECK_MS)) sendBuzz(h);
 }};
 
-// The page's own listeners, added once: the Buzzer let go wherever the
-// pointer is when its button comes up (or a pointerup missed: a move with
-// no button down), its key let go, or the page left; and a click or a key
-// anywhere on the page lets it sound.
-const listen = (h) => {{
-  const letGo = () => hold(h, null);
+// A window's own listeners, added once for the page and once for each pop-out
+// or pop-up: the Buzzer let go wherever the pointer is when its button comes up
+// (or a pointerup missed: a move with no button down), its key let go, or the
+// window left; and a click or a key anywhere on it lets the page sound. Only
+// the window holding it lets go: pressing a button in a pop-out takes the focus
+// from the page behind it, whose blur would otherwise end the hold at once.
+const listen = (h, win) => {{
+  const letGo = () => {{ if (h.buzzWin === win) hold(h, null); }};
   const isKey = (event) => event.key === " " || event.key === "Enter";
-  window.addEventListener("pointerup", letGo);
-  window.addEventListener("pointercancel", letGo);
-  window.addEventListener("blur", letGo);
-  window.addEventListener("pointermove", (event) => {{ if (h.buzzBy === "pointer" && (event.buttons & 1) === 0) letGo(); }});
-  window.addEventListener("keyup", (event) => {{ if (h.buzzBy === "key" && isKey(event)) letGo(); }});
-  document.addEventListener("visibilitychange", () => {{ if (document.hidden) letGo(); }});
-  window.addEventListener("pointerdown", () => h.wake(), true);
-  window.addEventListener("keydown", () => h.wake(), true);
+  win.addEventListener("pointerup", letGo);
+  win.addEventListener("pointercancel", letGo);
+  win.addEventListener("blur", letGo);
+  win.addEventListener("pagehide", letGo);
+  win.addEventListener("pointermove", (event) => {{ if (h.buzzBy === "pointer" && (event.buttons & 1) === 0) letGo(); }});
+  win.addEventListener("keyup", (event) => {{ if (h.buzzBy === "key" && isKey(event)) letGo(); }});
+  win.document.addEventListener("visibilitychange", () => {{ if (win.document.hidden) letGo(); }});
+  win.addEventListener("pointerdown", () => h.wake(), true);
+  win.addEventListener("keydown", () => h.wake(), true);
+}};
+
+// A Buzzer's button, in the page or a pop-out: held while it is down, or Space
+// or Enter on it; let go by its window's listeners (listen).
+const wireBuzzer = (h, buzzer, win) => {{
+  buzzer.addEventListener("pointerdown", (event) => {{
+    if (event.button !== 0) return;
+    event.preventDefault();
+    try {{ buzzer.setPointerCapture(event.pointerId); }} catch (error) {{}}
+    hold(h, "pointer", win);
+  }});
+  buzzer.addEventListener("keydown", (event) => {{
+    if (event.key !== " " && event.key !== "Enter") return;
+    event.preventDefault();
+    if (!event.repeat) hold(h, "key", win);
+  }});
+  buzzer.addEventListener("contextmenu", (event) => event.preventDefault());  // a long press on a phone
+}};
+
+// A pop-out or pop-up opened, or a pop-up taken back, with the host's line wired.
+// The timer's buttons go through the clock's trigger, as a whole run: the page's
+// own Start, Stop and Reset are laid out by it, and must agree with these.
+const openWindow = (h, win, popup) => {{
+  h.openPip(win, popup);
+  const doc = win.document;
+  for (const button of doc.querySelectorAll("[data-a]")) {{
+    button.addEventListener("click", () => h.send?.("control", {{ action: button.dataset.a, n: Date.now() }}));
+  }}
+  wireBuzzer(h, doc.querySelector(".buzz"), win);
+  listen(h, win);
 }};
 
 // The pop-out, if no other tab of this browser holds it: the lock is asked
@@ -1178,7 +1273,7 @@ const claim = (h, api) => new Promise((resolve, reject) => {{
   const open = async () => {{
     const win = await api.requestWindow(PIP_SIZE);
     const closed = new Promise((done) => win.addEventListener("pagehide", done));
-    h.openPip(win, false);
+    openWindow(h, win, false);
     return {{ closed }};
   }};
   if (!navigator.locks) {{
@@ -1213,7 +1308,7 @@ const openPopup = (h, note) => {{
     return;
   }}
   try {{ sessionStorage.setItem(POPUP_KEY, name); }} catch (error) {{}}
-  h.openPip(win, true);
+  openWindow(h, win, true);
 }};
 
 // A tab reloaded takes back the pop-up it had: a plain window outlives its
@@ -1228,7 +1323,7 @@ const adopt = (h) => {{
   let win = null;
   try {{ win = window.top.open("", name, POPUP_FEATURES); }} catch (error) {{}}
   if (win !== null && win.document.querySelector(".gone-note") !== null) {{
-    h.openPip(win, true);
+    openWindow(h, win, true);
     return;
   }}
   if (win !== null) win.close();
@@ -1263,11 +1358,13 @@ export default function (component) {{
   if (!data.host) {{
     h.buzzHeld = false;
     h.buzzBy = null;
+    h.buzzWin = null;
     h.buzzWant = null;
   }}
   if (!h.listening) {{
     h.listening = true;
-    listen(h);
+    h.keepBuzz = () => keepBuzz(h);
+    listen(h, window);
   }}
   if (data.host) {{
     for (const slider of root.querySelectorAll("input.size")) {{
@@ -1318,20 +1415,7 @@ function wire(h, root) {{
     }}
   }}
 
-  // The host's Buzzer: held while its button is down, or Space or Enter on it; let go by the page's listeners (listen).
-  const buzzer = root.querySelector(".buzzer");
-  buzzer.addEventListener("pointerdown", (event) => {{
-    if (event.button !== 0) return;
-    event.preventDefault();
-    try {{ buzzer.setPointerCapture(event.pointerId); }} catch (error) {{}}
-    hold(h, "pointer");
-  }});
-  buzzer.addEventListener("keydown", (event) => {{
-    if (event.key !== " " && event.key !== "Enter") return;
-    event.preventDefault();
-    if (!event.repeat) hold(h, "key");
-  }});
-  buzzer.addEventListener("contextmenu", (event) => event.preventDefault());  // a long press on a phone
+  wireBuzzer(h, root.querySelector(".buzzer"), window);
 
   // This panel's own switch: shown at once, and told to the page (the host's is every page's default).
   for (const button of root.querySelectorAll(".modes button")) {{
@@ -1633,12 +1717,26 @@ def _mode() -> str | None:
     return st.session_state.get(_MODE)
 
 
+def _is_switch(name: str, switch: str) -> bool:
+    """Whether a name in a page's address is the switch ``switch``, whatever its case and however many dashes before it."""
+    return name.lstrip("-").casefold() == switch
+
+
 def silent_asked(params: Mapping[str, str]) -> bool:
     """Whether a page's address (its query parameters, ``params``) says it makes no sound: the switch by itself or with any value but a no."""
-    return any(
-        name.lstrip("-").casefold() == _SILENT_SWITCH and value.casefold() not in _SILENT_OFF
-        for name, value in params.items()
-    )
+    return any(_is_switch(name, _SILENT_SWITCH) and value.casefold() not in _SILENT_OFF for name, value in params.items())
+
+
+def session_asked(params: Mapping[str, str]) -> str | None:
+    """The session a page's address (its query parameters, ``params``) connects it to, as written; None for none, or a blank one."""
+    return next((value for name, value in params.items() if _is_switch(name, _SESSION_SWITCH) and value.strip()), None)
+
+
+def _forget_link() -> None:
+    """Take the session out of the page's address, the rest of it kept: the page has left it, so a reload is not to go back."""
+    for name in list(st.query_params):
+        if _is_switch(name, _SESSION_SWITCH):
+            del st.query_params[name]
 
 
 def _notify(kind: str, text: str) -> None:
@@ -1773,6 +1871,14 @@ def _start_visit() -> None:
     _tokens().update(heard.hosts)
     state[_BROWSER] = heard.browser
     state[_TAB] = heard.tabid
+    # A link naming a session connects as Connect to Session does: joining it, or waiting for it to be created, as
+    # host only if this browser holds its token and no other page hosts it. A reload of a tab already in that session
+    # goes on below, and says so.
+    link = session_asked(st.query_params)
+    if link is not None and ids.normalized(link) != heard.tab:
+        state[_BOX] = link[:ids.MAX_TYPED]  # as much as the box takes: a longer ID is refused, as it would be if typed
+        _connect()
+        return
     if heard.tab is not None:
         # A reload of a tab that was in a session: that session, and no other.
         checked = _join(heard.tab)
@@ -1858,6 +1964,7 @@ def _cancel() -> None:
     sid = st.session_state.get(_SID) or ""
     st.session_state[_BOX] = sid
     st.session_state[_SCREEN] = START
+    _forget_link()
     _cookie_change(None, drop=sid or None)
 
 
@@ -1868,6 +1975,7 @@ def _leave() -> None:
         st.session_state[_BOX] = sid
         _notify("info", f"You left session {sid}.")
     st.session_state[_SCREEN] = START
+    _forget_link()
     _cookie_change(None, drop=sid)
 
 
@@ -1885,6 +1993,14 @@ def _control(action: str, value: float | None = None) -> None:
         REGISTRY.control(sid, _page(), action, value)
     except Refused as refusal:
         _notify("error", str(refusal))
+
+
+def _control_sent() -> None:
+    """The host has pressed Start, Stop or Reset on its pop-out's or pop-up's line: as the page's own buttons do."""
+    sent = _clock_sent("control")
+    action = sent.get("action") if isinstance(sent, dict) else None
+    if action in _POP_CONTROLS:
+        _control(action)
 
 
 def _limit_changed() -> None:
@@ -2032,12 +2148,13 @@ def _session_screen(sid: str, checked: Checked) -> None:
     role = checked.role
     who = "You are the host." if role == HOST else "You are viewing it."
     silent = silent_asked(st.query_params)
-    st.markdown(f"Session ID: **{_markdown_text(sid)}**   {who}" + (f" {_SILENT_TEXT}" if silent else ""))
+    st.markdown(f"Session ID: **{_markdown_text(sid)}**   {who}" + (f" {_SILENT_TEXT}" if silent else ""))
     st.fragment(_live, run_every=datetime.timedelta(seconds=CHECK_IN_S))(sid, role)
     clock = st.components.v2.component("speakertime_clock", html=_CLOCK_HTML, css=_CLOCK_CSS, js=_CLOCK_JS)
     data = {"sid": sid, **checked.shown.for_script(), "mode": _mode() or checked.shown.host_mode, "host": role == HOST,
             "silent": silent, "entered": st.session_state.get(_ENTERED, 0)}
-    clock(key=_CLOCK, data=data, on_mode_change=_mode_changed, on_size_change=_size_changed, on_colour_change=_colour_changed)
+    clock(key=_CLOCK, data=data, on_mode_change=_mode_changed, on_size_change=_size_changed, on_colour_change=_colour_changed,
+          on_control_change=_control_sent)
     if role == HOST:
         _host_controls(checked.shown)
     st.button("Leave Session", on_click=_leave)

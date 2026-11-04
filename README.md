@@ -45,6 +45,13 @@ pop-out only within a few seconds of a click or a key on the page, so the
 host's own pop-out follows the host's sliders, while a viewer's keeps its
 size and scales its contents to fit it instead.
 
+**Running the session from a pop-out** (v1.15): the host's pop-out or pop-up
+has one line under the timers: the **H:M:S | Min** switch, **Buzz**,
+**Start** (or **Restart**), **Stop** and **Reset**. They work as the page's own
+buttons do and are greyed in the same way, so a host on a single monitor,
+with Zoom maximized, can run the session without switching windows. A viewer's
+has the switch alone.
+
 **Colours**: beside each slider, a column of colour buttons sets that
 timer's colour for everyone: white (the default), black, yellow, orange,
 green, blue and magenta (never red: red means time is out). Choosing black
@@ -60,11 +67,12 @@ Time Remaining is white or black, and otherwise the colour opposite Time
 Remaining's on the colour wheel (the **A** button); the four buttons after it
 are other colours to choose instead.
 
-**Buzzer** (v1.10): on the host's panel only, beside Pop out. While the host
+**Buzzer** (v1.10): on the host's panel, beside Pop out, and on the host's
+pop-out or pop-up, where it reads **Buzz** (v1.15). While the host
 holds it down (the mouse button, a finger, or Space or Enter on it), Time
 Remaining reads **BUZZ** in steady red on every panel and pop-out, the
 host's included, and a buzzer sounds on every page of the session, the
-host's too (v1.13). Let go, everything is as before. It stops by itself 15
+host's too (v1.13). Let go, everything is as before. It stops by itself 8
 seconds after the host's page last said it was held, so a page that loses its
 connection with the button down cannot leave it sounding. A browser lets a
 page make a sound only once someone has clicked it, or pressed a key on it,
@@ -76,18 +84,28 @@ the buzzer."
 To keep one page quiet, host or viewer, add `?silent` to its address:
 `https://speakertime.streamlit.app/?silent` (`?-silent` works too, and
 `?silent=no` means not silent). That page still shows BUZZ, makes no sound,
-and says "No buzzer sound on this page." beside its role. It is useful when
-two pages of a session are on one machine or in one room.
+and shows "(silent)" after its role. It is useful when two pages of a session
+are on one machine or in one room.
 
 **H:MM:SS or MMM.M**: the switch under the timers shows them as hours, minutes
 and seconds, or as minutes to a tenth ("12.5"). Every panel and every pop-out
 has its own switch. A panel starts at the host's choice when it opens, and
-goes back to it whenever a host connects; a pop-out starts at its panel's.
+goes back to it whenever a host connects; a pop-out starts at its panel's. In
+a pop-out or pop-up the switch's buttons read **H:M:S** and **Min**.
 
 **A viewer**: type the session's ID and press **Connect to Session**. If the
 host has not created it yet, the page waits ("Please wait, connection
 pending") and connects by itself as soon as it is created; **Cancel** goes
 back.
+
+**A link that connects by itself** (v1.15): send a speaker
+`https://speakertime.streamlit.app/?session=ROOM5`, and the page opened from it
+joins that session with nothing typed, or waits for it to be created. Add
+`&silent` to keep it quiet. It takes the host's role only if that browser holds
+the session's host key and no other page is hosting it. A browser lets a page
+sound only once it has been clicked, so a speaker who wants the buzzer clicks
+once on the page, as its note says. **Leave Session** and **Cancel** take the
+session out of the address, so that a reload does not go back.
 
 Session IDs: letters, numbers and the characters `- _ . # @ + &`, at most 20.
 Spaces, tabs and other characters are ignored, and so is case: "room 5b" and
