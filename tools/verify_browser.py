@@ -9,7 +9,7 @@ tab holding an earlier version's state, the host's Buzzer, the page fitted
 to its window on connecting, the host's line in a pop-out or pop-up, a
 link that connects by itself, a viewer's Day and Night, the host's row with Copy
 Link, the frame's minimum in a small window, a viewer's Yes with check-ins
-waiting, and a box cleared.
+waiting, a box cleared, and the buttons' colours.
 Prints each check and exits 1 on any failure.
 
 Needs Playwright (``pip install playwright``) and a Chromium: ``--chrome``
@@ -421,6 +421,7 @@ def run(url: str, launch: dict, shots: Path | None) -> None:
         frame_minimum_and_recovery(browser, errors)
         yes_with_check_ins_waiting(browser, errors)
         box_cleared(browser, errors)
+        button_colours(browser, errors, shot)
 
         ok("no script errors on any page", not errors, errors)
         browser.close()
@@ -1892,6 +1893,113 @@ def box_cleared(browser, errors: list[str]) -> None:
     seen = (clock(page)["limit"], limit_box(page).input_value())
     ok("0 typed: shown as 0.0, no limit on the panel", seen == ("none", "0.0"), seen)
     page.context.close()
+
+
+_BUTTON_LOOK = """(e) => {
+  const own = getComputedStyle(e), text = getComputedStyle(e.querySelector('p') ?? e);
+  return { text: e.textContent.trim(), color: text.color, background: own.backgroundColor, weight: text.fontWeight, disabled: e.disabled };
+}"""
+_NO_BACKGROUND = "rgba(0, 0, 0, 0)"
+
+
+def button_colours(browser, errors: list[str], shot) -> None:
+    """29. Leave Session black on orange; Start, Restart and Stop black on red while they would do something, greyed otherwise, on the page and the host's line in a pop-out or pop-up; Buzz bold red on the panel's own background, Night or Day, the two swapped while held (Terry, 2026-11-04)."""
+    def connected(context, sid: str, create: bool) -> Page:
+        page = context.new_page()
+        page.on("pageerror", lambda error: errors.append(f"buttons: {error}"))
+        page.goto(profile_url)
+        page.locator('[data-testid="stApp"]').wait_for()
+        page.wait_for_timeout(1500)
+        id_box(page).fill(sid)
+        button(page, "Create New Session" if create else "Connect to Session").click()
+        page.get_by_text("You are the host." if create else "You are viewing it.").wait_for(timeout=8000)
+        page.wait_for_timeout(800)
+        return page
+
+    def look(target) -> dict:
+        return target.evaluate(_BUTTON_LOOK)
+
+    def paint(target) -> tuple[str, str]:
+        seen = look(target)
+        return seen["color"], seen["background"]
+
+    def greyed(target) -> bool:
+        seen = look(target)
+        return seen["disabled"] and seen["background"] == _NO_BACKGROUND and seen["color"] != rgb("#000000")
+
+    black_on_red = (rgb("#000000"), rgb("#ff4b4b"))
+    black_on_orange = (rgb("#000000"), rgb(CLOCK_COLOURS["orange"]))
+    size = {"width": 800, "height": 1300}
+    contexts = [browser.new_context(viewport=size) for _ in range(2)]
+    host, viewer = connected(contexts[0], "PAINT", True), connected(contexts[1], "PAINT", False)
+    leave = button(host, "Leave Session")
+    ok("Leave Session black on orange, the host's and a viewer's", paint(leave) == paint(button(viewer, "Leave Session")) == black_on_orange,
+       [paint(leave), paint(button(viewer, "Leave Session"))])
+    leave.hover()
+    hovered = paint(leave)
+    leave.focus()
+    ok("and with the pointer on it, or the focus", (hovered, paint(leave)) == (black_on_orange, black_on_orange), [hovered, paint(leave)])
+    host.mouse.move(0, 0)
+
+    with host.context.expect_page(timeout=5000) as popped:
+        on_clock(host, _CLICK_POP)
+    pip = popped.value
+    pip.on("pageerror", lambda error: errors.append(f"buttons, its window: {error}"))
+    host.wait_for_timeout(1000)
+
+    def line(action: str):
+        return pip.locator(f'[data-a="{action}"]')
+
+    shot(host, "16-buttons-stopped.png")
+    ok("stopped at zero: Start black on red, Stop greyed, on the page", paint(button(host, "Start")) == black_on_red and greyed(button(host, "Stop")),
+       [look(button(host, "Start")), look(button(host, "Stop"))])
+    ok("and on the host's line in its window", paint(line("start")) == black_on_red and greyed(line("stop")), [look(line("start")), look(line("stop"))])
+    button(host, "Start").click()
+    settled(lambda: button(host, "Restart").is_disabled(), True)
+    settled(lambda: line("stop").is_disabled(), False)
+    stop = button(host, "Stop")
+    ok("running: Restart greyed, Stop black on red, on the page", greyed(button(host, "Restart")) and paint(stop) == black_on_red,
+       [look(button(host, "Restart")), look(stop)])
+    ok("and on the host's line in its window", greyed(line("start")) and paint(line("stop")) == black_on_red, [look(line("start")), look(line("stop"))])
+    stop.hover()
+    hovered = paint(stop)
+    stop.focus()
+    ok("Stop stays black on red with the pointer on it, or the focus", (hovered, paint(stop)) == (black_on_red, black_on_red), [hovered, paint(stop)])
+    host.mouse.move(0, 0)
+    shot(host, "17-buttons-running.png")
+    shot(pip, "18-buttons-running-line.png")
+    stop.click()
+    settled(lambda: button(host, "Restart").is_disabled(), False)
+    settled(lambda: line("start").is_disabled(), False)
+    ok("stopped part way: Restart black on red, Stop greyed, on the page", paint(button(host, "Restart")) == black_on_red and greyed(button(host, "Stop")),
+       [look(button(host, "Restart")), look(button(host, "Stop"))])
+    ok("and on the host's line in its window", paint(line("start")) == black_on_red and greyed(line("stop")), [look(line("start")), look(line("stop"))])
+
+    def held(page: Page, target, want: tuple[str, str]) -> tuple[str, str]:
+        box = target.bounding_box()
+        page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+        page.mouse.down()
+        seen = settled(lambda: paint(target), want, 2.0)
+        page.mouse.up()
+        page.mouse.move(0, 0)
+        return seen
+
+    # Night, the panel's default, then Day: the panel's background and its red are the session's look's.
+    for name, panel, red in (("Night", "#000000", "#ff2a2a"), ("Day", "#ffffff", "#d1242f")):
+        if name == "Day":
+            on_clock(host, _SWATCH, ["elapsed", "black"])
+            settled(lambda: paint(host.locator(".buzzer"))[1], rgb(panel))
+            settled(lambda: paint(pip.locator(".buzz"))[1], rgb(panel))
+        for where, page, target in (("the page", host, host.locator(".buzzer")), ("its window", pip, pip.locator(".buzz"))):
+            seen = look(target)
+            ok(f"{name}, on {where}: Buzz, bold red on the panel's background", (seen["text"], seen["color"], seen["background"], seen["weight"])
+               == ("Buzz", rgb(red), rgb(panel), "700"), seen)
+            want = (rgb(panel), rgb(red))
+            seen = held(page, target, want)
+            ok(f"{name}, on {where}: the two swapped while held, back when let go", seen == want
+               and settled(lambda: paint(target), (rgb(red), rgb(panel)), 2.0) == (rgb(red), rgb(panel)), seen)
+    for context in contexts:
+        context.close()
 
 
 profile_url = ""
