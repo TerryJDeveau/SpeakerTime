@@ -198,6 +198,7 @@ _WARN_BOX = "warn_box"    # the Time Left Warning box (minutes)
 _PICKER = "warn_colours"  # the warning's colour buttons: their trigger, "pick"
 _PICKER_BOX = "warn_colours_box"  # their label and them
 _START_BUTTON = "start"   # the host's Start button, which reads Restart once the timer has run
+_STOP_BUTTON = "stop"     # the host's Stop button, coloured by _PAGE_STYLE as Start is
 _LEAVE_BUTTON = "leave"   # Leave Session, coloured by _PAGE_STYLE through Streamlit's class .st-key-leave
 _COPY_BUTTON = "copy_link"  # the host's Copy Link button, found by the page's script by this key (Streamlit's class .st-key-copy_link)
 _TOKENS = "tokens"        # the host's token of each session this browser hosted: {sid: token}
@@ -354,6 +355,8 @@ _COPY_SHOWN_MS = 1500
 """What the Copy Link button says after a press, for this long."""
 _POP_BUZZ = "Buzz"
 """The Buzzer's label on the host's line in a pop-out or pop-up (Terry, 2026-11-03)."""
+_BUTTON_RED = "#ff4b4b"
+"""Start's, Restart's and Stop's background while they would do something, on the page and the host's line in a pop-out or pop-up: Streamlit's primary colour, which the page's Start has."""
 _BUTTON_TEXT = "#000000"
 """The text on a button with a colour of its own: Leave Session, and Start, Restart and Stop while they would do something (Terry, 2026-11-04)."""
 _POP_CONTROLS = {"start": _START, "stop": "Stop", "reset": "Reset"}
@@ -495,6 +498,7 @@ _PIP_CSS = f"""
   .bar > button {{ font: inherit; font-size: 14px; color: var(--text); background: transparent;
     border: 1px solid var(--line); border-radius: 8px; padding: 4px 12px; cursor: pointer; }}
   .bar > button:disabled {{ opacity: 0.35; cursor: default; }}
+  .bar > [data-a="start"]:enabled, .bar > [data-a="stop"]:enabled {{ background: {_BUTTON_RED}; border-color: {_BUTTON_RED}; color: {_BUTTON_TEXT}; }}
   .bar > .buzz {{ border-color: var(--over); touch-action: none; user-select: none; -webkit-user-select: none; }}
   .bar > .buzz.on {{ background: var(--over); color: var(--panel); }}
   .bar > [data-a="start"]::before {{ content: "{_RESTART}"; display: block; height: 0; overflow: hidden; visibility: hidden; }}
@@ -1849,6 +1853,11 @@ _PAGE_STYLE = """
   background: {CLOCK_COLOURS["orange"]} !important; border-color: {CLOCK_COLOURS["orange"]} !important; color: {_BUTTON_TEXT} !important;
 }}
 .st-key-{_LEAVE_BUTTON} button:hover {{ filter: brightness(0.93); }}
+/* Start, Restart and Stop black on red while they would do something, greyed by Streamlit otherwise (Terry, 2026-11-04). */
+.st-key-{_START_BUTTON} button:enabled, .st-key-{_STOP_BUTTON} button:enabled {{
+  background: {_BUTTON_RED} !important; border-color: {_BUTTON_RED} !important; color: {_BUTTON_TEXT} !important;
+}}
+.st-key-{_START_BUTTON} button:enabled:hover, .st-key-{_STOP_BUTTON} button:enabled:hover {{ filter: brightness(0.93); }}
 </style>
 """
 
@@ -2412,7 +2421,7 @@ def _host_controls(shown: Shown) -> None:
     # timer has run, greyed or not (Terry, 2026-11-03), and Start again after Reset.
     start = _RESTART if shown.running or shown.elapsed > 0 else _START
     row.button(start, key=_START_BUTTON, on_click=_control, args=("start",), disabled=shown.running, type="primary")
-    row.button("Stop", on_click=_control, args=("stop",), disabled=not shown.running)
+    row.button("Stop", key=_STOP_BUTTON, on_click=_control, args=("stop",), disabled=not shown.running)
     row.button("Reset", on_click=_control, args=("reset",), disabled=not shown.running and shown.elapsed == 0)
     row.space("stretch")
     # Copy Link's work is in the browser, where the click may reach the clipboard (_CLOCK_JS, copyLink); its run does nothing.
