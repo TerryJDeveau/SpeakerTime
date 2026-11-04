@@ -2379,15 +2379,16 @@ def _host_controls(shown: Shown) -> None:
     # reaches the browser once, with this run's box, and a check-in waiting when the run begins takes the write past the
     # box (Streamlit's on_script_will_rerun). A box laid out without its value starts at its default, 0.0, and the next
     # check-in reports that as the host's change, so the session loses its limit (seen on a viewer's Yes; v1.18).
+    # value=None: Streamlit reads a box cleared as its default, so with none a box cleared stays blank (Terry, 2026-11-04).
     st.session_state[_LIMIT_BOX] = shown.limit
     st.session_state[_WARN_BOX] = shown.warning
     row = st.container(horizontal=True, vertical_alignment="bottom", wrap=True)
     row.number_input(
-        "Time Limit (minutes)", key=_LIMIT_BOX, min_value=None, step=1.0, format="%.1f",
+        "Time Limit (minutes)", key=_LIMIT_BOX, value=None, min_value=None, step=1.0, format="%.1f",
         help=_LIMIT_HELP, placeholder="Blank: no limit", on_change=_limit_changed, width=200,
     )
     row.number_input(
-        "Time Left Warning (minutes)", key=_WARN_BOX, min_value=None, step=1.0, format="%.1f",
+        "Time Left Warning (minutes)", key=_WARN_BOX, value=None, min_value=None, step=1.0, format="%.1f",
         help=_WARNING_HELP, placeholder="Blank: none", on_change=_warning_changed, width=220,
     )
     buttons, chosen = shown.warning_buttons()
