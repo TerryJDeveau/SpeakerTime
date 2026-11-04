@@ -978,7 +978,7 @@ const hub = () => (window.speakerTime ??= {{
     start.disabled = b.running;
     doc.querySelector('[data-a="stop"]').disabled = !b.running;
     doc.querySelector('[data-a="reset"]').disabled = !b.running && b.elapsed === 0;
-    doc.querySelector(".buzz").classList.toggle("on", this.buzzHeld);
+    doc.querySelector("button.buzz").classList.toggle("on", this.buzzHeld);  // not ".buzz": Time Remaining has that class while it reads BUZZ
   }},
 
   // The pop-out (popup false), or a plain pop-up (true): drawn and timed from
@@ -1461,7 +1461,7 @@ const openWindow = (h, win, popup) => {{
   for (const button of doc.querySelectorAll("[data-a]")) {{
     button.addEventListener("click", () => h.send?.("control", {{ action: button.dataset.a, n: Date.now() }}));
   }}
-  wireBuzzer(h, doc.querySelector(".buzz"), win);
+  wireBuzzer(h, doc.querySelector("button.buzz"), win);
   listen(h, win);
 }};
 
