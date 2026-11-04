@@ -264,10 +264,12 @@ _ROOM_TEXT = "00:00"
 # the document, so that a run of the page, which may rebuild the elements, leaves them; the column's rule (_PAGE_STYLE)
 # holds only while the clock is on the page, so that the start screen stays at full size. After that the sliders and
 # the window are the user's: a panel made wider than the window runs past its edge, with its scroll bar (v1.11).
-_FIT_SHARE = 1 / 3
-"""The panel alone shrinks until it would have less than this share of the window's height; below that, the whole column does too."""
-_FIT_LEAST = 0.1
-"""The smallest either scale goes: a window of almost no height shows the page unreadably small as it is, and browsers keep a smallest font."""
+_FIT_SHARE = 2 / 3
+"""In a small window the panel keeps this share of the window's height, the whole column shrinking to leave it that (v1.16, Terry, 2026-11-04: twice the 1/3 it had)."""
+_FIT_PANEL_PX = 250
+"""... up to this height as drawn, so that a window of the usual size is left as it was: the panel alone shrinks there, the text around it keeping its size."""
+_FIT_LEAST = 0.2
+"""The smallest either scale goes (v1.16: twice the 0.1 it had): a window of almost no height shows the page unreadably small as it is, and browsers keep a smallest font."""
 _FIT_GROW_MS = 3000
 """For this long after connecting the scales may rise again as well as fall: elements on their way out may have been measured."""
 _FIT_SETTLED_MS = 1500
@@ -1062,6 +1064,7 @@ const PIP_SIZE = {{ width: 340, height: 280 }};
 const BUZZ_RESEND_MS = {_BUZZ_RESEND_MS};
 const BUZZ_CHECK_MS = {_BUZZ_CHECK_MS};
 const FIT_SHARE = {_FIT_SHARE};
+const FIT_PANEL_PX = {_FIT_PANEL_PX};
 const FIT_LEAST = {_FIT_LEAST};
 const FIT_GROW_MS = {_FIT_GROW_MS};
 const FIT_SETTLED_MS = {_FIT_SETTLED_MS};
@@ -1121,9 +1124,10 @@ const fitted = (h, root) => {{
   }}
   let page = 1;
   let scale = (room - others) / panel;
-  if (scale < 1 && scale * panel < FIT_SHARE * room) {{
-    page = Math.max(FIT_LEAST, Math.min(1, (1 - FIT_SHARE) * room / others));
-    scale = FIT_SHARE * room / (page * panel);
+  const least = Math.min(FIT_SHARE * room, FIT_PANEL_PX, panel);  // the panel's height as drawn, in a small window
+  if (scale < 1 && scale * panel < least) {{
+    page = Math.max(FIT_LEAST, Math.min(1, (room - least) / others));
+    scale = least / (page * panel);
   }}
   const down = (value) => Math.floor(value * 1000) / 1000;
   return {{ page: down(page), panel: down(Math.max(FIT_LEAST, Math.min(1, scale, h.fitting.widest / page))) }};
