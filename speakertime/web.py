@@ -67,7 +67,19 @@ A link that connects by itself (Terry, 2026-11-03, v1.15)
 ---------------------------------------------------------
 A page whose address says ``?session=ROOM5`` connects as Connect to Session
 does, at the visit's start (``session_asked``). Leave Session and Cancel take it
-out of the address, so that a reload does not go back.
+out of the address, so that a reload does not go back. The host's Copy Link
+(Terry, 2026-11-04, v1.16) puts that address on the clipboard, from the page's
+script (``copyLink``), never with this page's ``?silent``.
+
+A viewer's Day and Night (Terry, 2026-11-04, v1.16)
+---------------------------------------------------
+A toggle on a viewer's panel and pop-out or pop-up. Until the viewer presses the
+one not shown it does nothing. Then the background is white or black whatever
+the host chooses, the text with it, a timer's figures too where they are black or
+white; the host's other colours still come through, and a change that would force
+the other of night and day is ignored. The browser's alone (``hub``'s
+``shownLook``), kept by session in a cookie: another session keeps the default,
+and Leave Session forgets it.
 
 Fitted to the window on connecting (Terry, 2026-11-03)
 ------------------------------------------------------
@@ -121,7 +133,7 @@ from streamlit.runtime import Runtime
 from streamlit.runtime.scriptrunner_utils.script_run_context import get_script_run_ctx
 
 from . import ids
-from .colours import AUTO, CLOCK_COLOURS, DARK, DEFAULT_COLOUR, LIGHT, warning_colour
+from .colours import AUTO, BLACK, CLOCK_COLOURS, DARK, DEFAULT_COLOUR, LIGHT, WHITE, warning_colour
 from .sessions import (
     BUZZ_HOLD_S, HOST, REGISTRY, SIZE_DEFAULT, SIZE_MAX, SIZE_MIN, SIZE_STEP, SIZED, VIEWER, Checked, Refused, Shown,
 )
@@ -149,6 +161,10 @@ _RECENT_KEPT = 10
 RECENT_COOKIE = "speakertime_recent"
 HOSTS_COOKIE = "speakertime_hosts"
 BROWSER_COOKIE = "speakertime_browser"
+DAYNIGHT_COOKIE = "speakertime_daynight"
+"""A viewer's Day or Night by session, read and written by the page's own script alone: the server has no part in it."""
+_DAYNIGHT_KEPT = 20
+"""The most sessions' Day or Night the browser keeps, the most recent."""
 LEGACY_LAST_COOKIE = "speakertime_last"
 """Until 2026-11-01 the one session remembered; read once as the recent list, then removed."""
 TAB_KEY = "speakertime_tab"
@@ -365,6 +381,13 @@ _MODES_HTML = '<div class="modes" role="group" aria-label="Show the times as">' 
 ) + "</div>"
 """The switch, the same on a panel, a pop-out and a pop-up (Terry, 2026-11-04: of v1.15's shorter H:M:S and Min in the last two, "didn't improve anything")."""
 
+_DAY, _NIGHT = "day", "night"
+_DAYNIGHT_THEMES = {_DAY: LIGHT, _NIGHT: DARK}
+_DAYNIGHT_HTML = '<div class="daynight" role="group" aria-label="Show the panel by day or by night" hidden>' + "".join(
+    f'<button type="button" data-d="{choice}">{choice.capitalize()}</button>' for choice in _DAYNIGHT_THEMES
+) + "</div>"
+"""A viewer's Day/Night toggle (Terry, 2026-11-04), on its panel and pop-out or pop-up; a page's script keeps the choice (``hub``, shownLook)."""
+
 
 def _cell(name: str, extra: str = "") -> str:
     return f'<div class="cell"{extra}><span class="label" data-l="{name}"></span><span class="value" data-v="{name}"></span></div>'
@@ -419,7 +442,8 @@ _SHARED_CSS = f"""
 .pair .cell {{ flex: 0 1 auto; min-width: 0; }}
 .pair .label {{ text-align: center; }}
 .pair .cell[hidden] {{ display: none; }}
-.modes button.on {{ background: var(--text); color: var(--panel); }}
+.modes button.on, .daynight button.on {{ background: var(--text); color: var(--panel); }}
+.daynight[hidden] {{ display: none; }}
 """
 
 _GONE_TEXT = "Its SpeakerTime tab has gone: close this window."
@@ -431,7 +455,7 @@ _GONE_TEXT = "Its SpeakerTime tab has gone: close this window."
 # maximized Zoom window on a single monitor (Terry, 2026-11-03).
 _PIP_HTML = (
     '<div class="stage">' + _row("elapsed", False) + _row("remaining", False) + _row("limit", False)
-    + f'<div class="bar">{_MODES_HTML}<button class="buzz" type="button" data-host hidden>{_POP_BUZZ}</button>'
+    + f'<div class="bar">{_MODES_HTML}{_DAYNIGHT_HTML}<button class="buzz" type="button" data-host hidden>{_POP_BUZZ}</button>'
     + "".join(f'<button type="button" data-a="{action}" data-host hidden>{label}</button>' for action, label in _POP_CONTROLS.items())
     + "</div></div>"
     + f'<div class="gone-note">{_GONE_TEXT}</div>'
@@ -454,8 +478,8 @@ _PIP_CSS = f"""
   {_SHARED_CSS}
   .pair .cell + .cell {{ margin-left: 44px; }}
   .bar {{ display: flex; align-items: center; gap: 8px; width: max-content; margin: 4px auto 0; white-space: nowrap; }}
-  .modes {{ display: flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }}
-  .modes button {{ font: inherit; font-size: 14px; color: var(--text); background: transparent; border: 0;
+  .modes, .daynight {{ display: flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }}
+  .modes button, .daynight button {{ font: inherit; font-size: 14px; color: var(--text); background: transparent; border: 0;
     padding: 4px 10px; cursor: pointer; }}
   .bar > button {{ font: inherit; font-size: 14px; color: var(--text); background: transparent;
     border: 1px solid var(--line); border-radius: 8px; padding: 4px 12px; cursor: pointer; }}
@@ -564,6 +588,14 @@ const LABELS = {json.dumps(_LABELS)};
 const THEMES = {json.dumps(_THEMES)};
 const DARK = {json.dumps(DARK)};
 const LIGHT = {json.dumps(LIGHT)};
+const COLOURS = {json.dumps(CLOCK_COLOURS)};
+const WHITE = {json.dumps(WHITE)};
+const BLACK = {json.dumps(BLACK)};
+const DAY = {json.dumps(_DAY)};
+const NIGHT = {json.dumps(_NIGHT)};
+const DAYNIGHT_COOKIE = {json.dumps(DAYNIGHT_COOKIE)};
+const DAYNIGHT_KEPT = {_DAYNIGHT_KEPT};
+const COOKIE_SECONDS = {_COOKIE_DAYS * 86400};
 const PIP_HTML = {json.dumps(_PIP_HTML)};
 const PIP_CSS = {json.dumps(_PIP_CSS)};
 const PIP_FILL = {_PIP_FILL};
@@ -634,6 +666,7 @@ const hub = () => (window.speakerTime ??= {{
   buzzSend: null,   // sends it (the latest sync element's trigger)
   audio: null,      // the page's AudioContext, once it may sound (wake)
   tone: null,       // the buzzer while it sounds: {{ gain, oscillators }}
+  dayNight: null,   // a viewer's Day/Night for the session: {{ sid, choice, shown, seen }} (dayNightOf)
 
   // A check-in's reading (or the clock's own, as it is laid out). A Buzzer
   // that stopped by itself changes no version, so its state is taken from
@@ -690,9 +723,73 @@ const hub = () => (window.speakerTime ??= {{
              warning: b.warning === null ? null : clock(b.warning), buzz }};
   }},
 
-  // The session's look on a panel (the .clock element) or the pop-out (its body): the theme's colours and the timers'.
-  paint(box) {{
+  // The viewers' Day or Night by session, from their cookie (the latest last; web._DAYNIGHT_KEPT at most).
+  dayNightKept() {{
+    try {{
+      const pair = document.cookie.split("; ").find((one) => one.startsWith(DAYNIGHT_COOKIE + "="));
+      const kept = pair === undefined ? null : JSON.parse(decodeURIComponent(pair.slice(DAYNIGHT_COOKIE.length + 1)));
+      return typeof kept === "object" && kept !== null && !Array.isArray(kept) ? kept : {{}};
+    }} catch (error) {{
+      return {{}};
+    }}
+  }},
+
+  // A viewer's Day/Night for session ``sid``. ``choice``: null until pressed for this session, and the session's look is
+  // shown as it is. ``shown``: each timer's colour (a name) as shown under the choice; ``seen``: the host's, as last seen.
+  dayNightOf(sid) {{
+    if (this.dayNight === null || this.dayNight.sid !== sid) {{
+      const choice = this.dayNightKept()[sid];
+      this.dayNight = {{ sid, choice: choice === DAY || choice === NIGHT ? choice : null, shown: {{}}, seen: {{}} }};
+    }}
+    return this.dayNight;
+  }},
+
+  // The look this page shows (Terry, 2026-11-04). The session's, unless a viewer has pressed Day or Night for it: then
+  // the background is white or black whatever the host has chosen, and the text with it, a timer's figures too where
+  // they are black or white. The host's other colours still come through; a change to the black or white that would
+  // force the other of night and day is ignored, the timer staying as it was.
+  shownLook() {{
     const look = this.base.look;
+    if (look === null || this.host !== false) return look;
+    const d = this.dayNightOf(this.base.sid);
+    if (d.choice === null) return look;
+    const theme = d.choice === DAY ? LIGHT : DARK;
+    const own = theme === LIGHT ? BLACK : WHITE, other = theme === LIGHT ? WHITE : BLACK;
+    const names = {{}};
+    for (const timer of ["elapsed", "remaining"]) {{
+      const name = look.names[timer];
+      if (d.seen[timer] !== name) {{
+        const first = d.seen[timer] === undefined;
+        d.seen[timer] = name;
+        if (first || name !== other) d.shown[timer] = name;
+      }}
+      if (d.shown[timer] === other) d.shown[timer] = own;
+      names[timer] = d.shown[timer];
+    }}
+    return {{ ...look, theme, names, elapsed: COLOURS[names.elapsed], remaining: COLOURS[names.remaining] }};
+  }},
+
+  // A viewer pressing Day or Night, on its panel or pop-out. The one already shown does nothing, so the session's look
+  // goes on deciding until the other is pressed. Kept for this session alone (Leave Session forgets it, _WRITER_JS).
+  setDayNight(choice) {{
+    if (this.base === null || this.host !== false) return;
+    if (this.shownLook()?.theme === (choice === DAY ? LIGHT : DARK)) return;
+    const sid = this.base.sid;
+    this.dayNightOf(sid).choice = choice;
+    try {{
+      const kept = this.dayNightKept();
+      delete kept[sid];  // and added again, as the most recent
+      kept[sid] = choice;
+      const sids = Object.keys(kept);
+      while (sids.length > DAYNIGHT_KEPT) delete kept[sids.shift()];
+      document.cookie = DAYNIGHT_COOKIE + "=" + encodeURIComponent(JSON.stringify(kept)) + "; max-age=" + COOKIE_SECONDS
+        + "; path=/; SameSite=Lax" + (location.protocol === "https:" ? "; Secure" : "");
+    }} catch (error) {{}}  // no cookies for this page: the choice lasts this visit
+  }},
+
+  // The look on a panel (the .clock element) or the pop-out (its body): the theme's colours and the timers'.
+  paint(box) {{
+    const look = this.shownLook();
     if (look === null) return;
     const key = JSON.stringify(look);
     if (box.dataset.look === key) return;
@@ -748,6 +845,12 @@ const hub = () => (window.speakerTime ??= {{
       }}
     }}
     for (const button of root.querySelectorAll(".modes button")) button.classList.toggle("on", button.dataset.m === mode);
+    const group = root.querySelector(".daynight");
+    if (group !== null) {{
+      if (group.hidden === (this.host === false)) group.hidden = this.host !== false;
+      const on = this.shownLook()?.theme === LIGHT ? DAY : NIGHT;
+      for (const button of group.querySelectorAll("button")) button.classList.toggle("on", button.dataset.d === on);
+    }}
     this.buzzer(t.buzz);
   }},
 
@@ -892,6 +995,12 @@ const hub = () => (window.speakerTime ??= {{
         h.fitPip(win, doc);
       }});
     }}
+    for (const button of doc.querySelectorAll(".daynight button")) {{
+      button.addEventListener("click", () => {{
+        h.setDayNight(button.dataset.d);
+        h.draw(doc, h.pipMode);
+      }});
+    }}
     const tick = () => {{
       win.speakerTimeBeat = Date.now();
       doc.body.classList.remove("gone");
@@ -930,7 +1039,7 @@ const hub = () => (window.speakerTime ??= {{
 _CLOCK_HTML = (
     '<div class="scroll"><div class="clock">'
     + "".join(_row(name, name in SIZED) for name in ("elapsed", "remaining", "limit"))
-    + f'<div class="tools">{_MODES_HTML}<button class="pop" type="button" hidden></button>'
+    + f'<div class="tools">{_MODES_HTML}{_DAYNIGHT_HTML}<button class="pop" type="button" hidden></button>'
     + f'<button class="buzzer" type="button" hidden>{_BUZZER_LABEL}</button></div>'
     + '<div class="why" hidden></div>'
     + '<div class="note" hidden></div>'
@@ -983,8 +1092,8 @@ _CLOCK_CSS = f"""
 {_SHARED_CSS}
 .tools {{ display: flex; justify-content: center; align-items: center; flex-wrap: wrap; gap: 8px 12px; margin-top: 4px;
   contain: inline-size; }}
-.modes {{ display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }}
-.modes button {{ font: inherit; font-size: 14px; color: var(--text); background: transparent; border: 0;
+.modes, .daynight {{ display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }}
+.modes button, .daynight button {{ font: inherit; font-size: 14px; color: var(--text); background: transparent; border: 0;
   padding: 4px 10px; cursor: pointer; }}
 .pop, .buzzer {{
   font: inherit; font-size: 14px; color: var(--text); background: transparent;
@@ -1415,6 +1524,7 @@ export default function (component) {{
     h.entered = data.entered;
     const at = performance.now();
     h.fitting = {{ at, changed: at, widest: 1 }};
+    h.dayNight = null;  // read again: Leave Session may have forgotten it
   }}
   root.classList.toggle("host", data.host);
   root.querySelector(".buzzer").hidden = !data.host;
@@ -1492,6 +1602,14 @@ function wire(h, root) {{
       h.pageMode = button.dataset.m;
       drawPanel(h);
       h.send("mode", button.dataset.m);
+    }});
+  }}
+
+  // A viewer's Day/Night: the browser's alone, so shown at once, with no run of the page.
+  for (const button of root.querySelectorAll(".daynight button")) {{
+    button.addEventListener("click", () => {{
+      h.setDayNight(button.dataset.d);
+      drawPanel(h);
     }});
   }}
 
@@ -1614,6 +1732,7 @@ _WRITER_JS = f"""
 const RECENT = {json.dumps(RECENT_COOKIE)};
 const HOSTS = {json.dumps(HOSTS_COOKIE)};
 const LEGACY = {json.dumps(LEGACY_LAST_COOKIE)};
+const DAYNIGHT = {json.dumps(DAYNIGHT_COOKIE)};
 const TAB = {json.dumps(TAB_KEY)};
 const RECENT_KEPT = {_RECENT_KEPT};
 const HOSTS_KEPT = {_HOSTS_KEPT};
@@ -1652,6 +1771,11 @@ export default function (component) {{
     recent = recent.slice(0, RECENT_KEPT);
     write(RECENT, recent.length ? encodeURIComponent(JSON.stringify(recent)) : null);
     if (read(LEGACY) !== null) write(LEGACY, null);
+    const dayNight = readJson(DAYNIGHT);
+    if (data.drop !== null && dayNight !== null && typeof dayNight === "object" && data.drop in dayNight) {{
+      delete dayNight[data.drop];  // the session forgotten: its Day or Night too
+      write(DAYNIGHT, Object.keys(dayNight).length ? encodeURIComponent(JSON.stringify(dayNight)) : null);
+    }}
     if (data.host !== null) {{
       let hosts = readJson(HOSTS);
       if (typeof hosts !== "object" || hosts === null || Array.isArray(hosts)) hosts = {{}};
@@ -1741,7 +1865,8 @@ export default function (component) {
 
 _COOKIE_NOTE = (
     "This page keeps small cookies in your browser: the sessions you were in, the host key of a session you hosted, "
-    "and a random id for this browser, so that a reload or a return reconnects you. Leave Session forgets the session."
+    "your Day or Night for a session, and a random id for this browser, so that a reload or a return reconnects you. "
+    "Leave Session forgets the session."
 )
 
 
