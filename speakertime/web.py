@@ -49,13 +49,15 @@ pop-out starts at its panel's choice when it opens.
 The host's Buzzer (Terry, 2026-11-03)
 -------------------------------------
 Only the host's panel has the button. While it is held, Time Remaining reads
-"BUZZ" in red on every panel and pop-out, and a buzzer sounds on every
-viewer's page; let go, all is as before. It is sent through the check-in's
-element (``_SYNC_JS``), whose trigger reruns the fragment alone: the clock's
-would make a whole run, which can lay the clock out again under the finger.
-A browser lets a page sound only once it has been clicked or a key pressed
-on it since it loaded, so a viewer's page that reconnected by itself (a
-reload) says so under its clock until it is clicked.
+"BUZZ" in red on every panel and pop-out, and a buzzer sounds on every page
+of the session, the host's too (Terry, 2026-11-03, v1.13; viewers' alone until
+then), except a page whose address says ``?silent`` (``silent_asked``); let go,
+all is as before. It is sent through the check-in's element (``_SYNC_JS``),
+whose trigger reruns the fragment alone: the clock's would make a whole run,
+which can lay the clock out again under the finger. A browser lets a page
+sound only once it has been clicked or a key pressed on it since it loaded,
+so a viewer's page that reconnected by itself (a reload) says so under its
+clock until it is clicked; the host's press of the button is itself a click.
 
 What the browser keeps
 ----------------------
@@ -92,6 +94,7 @@ import os
 import re
 import urllib.parse
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -267,6 +270,12 @@ _BUZZ_TEXT = "BUZZ"
 """Time Remaining's figures while the host holds the Buzzer, in the out-of-time red, steady."""
 _BUZZ_NOTE = "Click anywhere on this page once so that it can sound the buzzer."
 """Under a viewer's clock while its page may not sound yet (no click or key on it since it loaded)."""
+_SILENT_SWITCH = "silent"
+"""The word in a page's address that stops its buzzer sounding: ``?silent`` (Terry, 2026-11-03: "-silent or something like that", so ``?-silent`` too)."""
+_SILENT_OFF = {"0", "false", "no", "off"}
+"""A value of the switch that says not silent after all (``?silent=no``)."""
+_SILENT_TEXT = "No buzzer sound on this page."
+"""Beside the role on a page whose address says silent, so that its silence is not taken for a fault."""
 
 _BUZZ_RESEND_MS = round(BUZZ_HOLD_S * 1000 / 3)
 """While the Buzzer is held, the host's page says so again this often: the server stops it after BUZZ_HOLD_S without word."""
@@ -538,13 +547,14 @@ const hub = () => (window.speakerTime ??= {{
   pipMode: CLOCK,   // the pop-out's (its own switch; the panel's when it opened)
   preview: {{}},     // the host's slider while dragged, before the size comes back from the server
   host: null,       // whether this page hosts the session (the clock's data); null until the clock has said
+  silent: false,    // this page's address says it makes no sound (the clock's data, silent_asked)
   listening: false, // the page's own listeners for the Buzzer are added (_CLOCK_JS, listen)
   buzzHeld: false,  // the host's Buzzer is held on this page
   buzzBy: null,     // held by "pointer" or "key"
   buzzWant: null,   // what this page last sent of it: true held, false let go; null for nothing
   buzzSentAt: -Infinity,  // when it last sent it (performance.now())
   buzzSend: null,   // sends it (the latest sync element's trigger)
-  audio: null,      // the page's AudioContext, on a viewer's page once it may sound (wake)
+  audio: null,      // the page's AudioContext, once it may sound (wake)
   tone: null,       // the buzzer while it sounds: {{ gain, oscillators }}
 
   // A check-in's reading (or the clock's own, as it is laid out). A Buzzer
@@ -671,22 +681,28 @@ const hub = () => (window.speakerTime ??= {{
     return activation ? activation.hasBeenActive : this.audio !== null && this.audio.state === "running";
   }},
 
-  // A viewer's page's sound: made, or woken, on a click or a key (_CLOCK_JS,
-  // listen), or once the page may sound. None on the host's page.
+  // The page's sound: made, or woken, on a click or a key (_CLOCK_JS, listen),
+  // or once the page may sound. None on a silent page, or before the clock has
+  // said which page this is.
   wake() {{
-    if (this.host !== false) return;
+    if (this.host === null || this.silent) return;
     try {{
       this.audio ??= new AudioContext();
       if (this.audio.state === "suspended") this.audio.resume().catch(() => {{}});
     }} catch (error) {{}}  // no sound in this browser
   }},
 
-  // The buzzer on a viewer's page, sounding while on: called by every
-  // check-in and every draw, the pop-out's included, so that a page hidden
-  // behind the slides, its own timers slowed, still starts and stops in time.
+  // The buzzer on this page, sounding while on: called by every check-in and
+  // every draw, the pop-out's included, so that a page hidden behind the
+  // slides, its own timers slowed, still starts and stops in time. The host's
+  // page goes by its own button, not the server's word, which comes later: it
+  // starts and stops with the press, and a check-in cannot break it up.
   buzzer(on) {{
-    if (this.host !== false) on = false;
-    else if (this.audio === null && this.mayPlay()) this.wake();
+    if (this.host === null || this.silent) on = false;
+    else {{
+      if (this.host) on = this.buzzHeld;
+      if (this.audio === null && this.mayPlay()) this.wake();
+    }}
     const ctx = this.audio;
     if (on && this.tone === null && ctx !== null && ctx.state === "running") {{
       const now = ctx.currentTime;
@@ -1002,7 +1018,7 @@ const drawPanel = (h) => {{
   keepBuzz(h);
   root.querySelector(".buzzer").classList.toggle("on", h.buzzHeld);
   const deaf = root.querySelector(".buzz-note");
-  const hidden = h.host !== false || h.mayPlay();
+  const hidden = h.host !== false || h.silent || h.mayPlay();
   if (deaf.hidden !== hidden) deaf.hidden = hidden;
 }};
 
@@ -1038,7 +1054,7 @@ const keepBuzz = (h) => {{
 // The page's own listeners, added once: the Buzzer let go wherever the
 // pointer is when its button comes up (or a pointerup missed: a move with
 // no button down), its key let go, or the page left; and a click or a key
-// anywhere on a viewer's page lets it sound.
+// anywhere on the page lets it sound.
 const listen = (h) => {{
   const letGo = () => hold(h, null);
   const isKey = (event) => event.key === " " || event.key === "Enter";
@@ -1135,6 +1151,7 @@ export default function (component) {{
   const root = parentElement.querySelector(".clock");
   h.clock = root;
   h.host = data.host;
+  h.silent = data.silent === true;
   root.classList.toggle("host", data.host);
   root.querySelector(".buzzer").hidden = !data.host;
   if (!data.host) {{
@@ -1502,6 +1519,14 @@ def _tab() -> str | None:
 
 def _mode() -> str | None:
     return st.session_state.get(_MODE)
+
+
+def silent_asked(params: Mapping[str, str]) -> bool:
+    """Whether a page's address (its query parameters, ``params``) says it makes no sound: the switch by itself or with any value but a no."""
+    return any(
+        name.lstrip("-").casefold() == _SILENT_SWITCH and value.casefold() not in _SILENT_OFF
+        for name, value in params.items()
+    )
 
 
 def _notify(kind: str, text: str) -> None:
@@ -1893,10 +1918,12 @@ def _wait_for(sid: str) -> None:
 def _session_screen(sid: str, checked: Checked) -> None:
     role = checked.role
     who = "You are the host." if role == HOST else "You are viewing it."
-    st.markdown(f"Session ID: **{_markdown_text(sid)}**   {who}")
+    silent = silent_asked(st.query_params)
+    st.markdown(f"Session ID: **{_markdown_text(sid)}**   {who}" + (f" {_SILENT_TEXT}" if silent else ""))
     st.fragment(_live, run_every=datetime.timedelta(seconds=CHECK_IN_S))(sid, role)
     clock = st.components.v2.component("speakertime_clock", html=_CLOCK_HTML, css=_CLOCK_CSS, js=_CLOCK_JS)
-    data = {"sid": sid, **checked.shown.for_script(), "mode": _mode() or checked.shown.host_mode, "host": role == HOST}
+    data = {"sid": sid, **checked.shown.for_script(), "mode": _mode() or checked.shown.host_mode, "host": role == HOST,
+            "silent": silent}
     clock(key=_CLOCK, data=data, on_mode_change=_mode_changed, on_size_change=_size_changed, on_colour_change=_colour_changed)
     if role == HOST:
         _host_controls(checked.shown)
