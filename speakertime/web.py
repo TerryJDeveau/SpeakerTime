@@ -1552,8 +1552,6 @@ export default function (component) {{
   if (h.entered !== data.entered) {{
     h.entered = data.entered;
     h.fitting = fitStart(performance.now());
-    // A page that may scroll (_FIT_TEXT) starts at its top, not where the start screen was left to reach its buttons.
-    document.querySelector('[data-testid="stMain"]')?.scrollTo(0, 0);
     h.dayNight = null;  // read again: Leave Session may have forgotten it
   }}
   root.classList.toggle("host", data.host);

@@ -1204,7 +1204,7 @@ def fitted_to_the_window(browser, errors: list[str], shot) -> None:
     roomy.get_by_text("You are viewing it.").wait_for(timeout=8000)
     roomy.wait_for_function("(before) => window.speakerTime.entered !== before", arg=entered, polling=100, timeout=8000)
     seen = fit_of(roomy)
-    ok("connecting again in a smaller window: fitted to it, at its top though the start screen was scrolled to reach its button", scrolled(seen) and seen["page"] * seen["panel"] < 1, seen)
+    ok("connecting again in a smaller window: fitted to it", scrolled(seen) and seen["page"] * seen["panel"] < 1, seen)
     host.close()
     button(small_viewer, "Yes").wait_for(timeout=(HOST_GRACE_S + 10) * 1000)
     entered = small_viewer.evaluate("window.speakerTime.entered")
@@ -1729,7 +1729,9 @@ def frame_minimum_and_recovery(browser, errors: list[str]) -> None:
     laptop.context.close()
     tiny = connected(sized(320, 200), "UNIFORM", False)
     seen = fit_of(tiny)
-    ok("a window of almost no height: the panel's scale not below 0.2, the column's not below 0.3, the frame in view", seen["page"] >= 0.3 and seen["panel"] >= 0.2 and scrolled(seen), seen)
+    # The start screen had to be scrolled to reach its button, and a page entering a session stays there (Terry, 2026-11-04: v1.17's jump to the top taken back).
+    ok("a window of almost no height: the panel's scale not below 0.2, the column's not below 0.3, the start screen's scroll kept, a scroll reaching the rest",
+       seen["page"] >= 0.3 and seen["panel"] >= 0.2 and seen["top"] > 0 and seen["ended"] and not seen["sideways"] and seen["reached"], seen)
     tiny.context.close()
 
     # A window where the column's scale changes how the text wraps: at 1 the host's page needs 0.565, and at 0.565 it
