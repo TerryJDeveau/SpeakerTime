@@ -198,6 +198,8 @@ _WARN_BOX = "warn_box"    # the Time Left Warning box (minutes)
 _PICKER = "warn_colours"  # the warning's colour buttons: their trigger, "pick"
 _PICKER_BOX = "warn_colours_box"  # their label and them
 _START_BUTTON = "start"   # the host's Start button, which reads Restart once the timer has run
+_STOP_BUTTON = "stop"     # the host's Stop button, coloured by _PAGE_STYLE as Start is
+_LEAVE_BUTTON = "leave"   # Leave Session, coloured by _PAGE_STYLE through Streamlit's class .st-key-leave
 _COPY_BUTTON = "copy_link"  # the host's Copy Link button, found by the page's script by this key (Streamlit's class .st-key-copy_link)
 _TOKENS = "tokens"        # the host's token of each session this browser hosted: {sid: token}
 _BROWSER = "browser"      # this browser's id (None if its script could not say)
@@ -329,7 +331,8 @@ intensive throttling), the fragment's among them; the pop-out window is
 shown, so its timers are not slowed.
 """
 
-_BUZZER_LABEL = "Buzzer"
+_BUZZER_LABEL = "Buzz"
+"""The Buzzer's label, on the panel and the host's line in a pop-out or pop-up (Terry, 2026-11-04)."""
 _BUZZ_TEXT = "BUZZ"
 """Time Remaining's figures while the host holds the Buzzer, in the out-of-time red, steady."""
 _BUZZ_NOTE = "Click anywhere on this page once so that it can sound the buzzer."
@@ -351,8 +354,10 @@ _COPIED_LABEL = "Copied"
 _NOT_COPIED_LABEL = "Could not copy"
 _COPY_SHOWN_MS = 1500
 """What the Copy Link button says after a press, for this long."""
-_POP_BUZZ = "Buzz"
-"""The Buzzer's label on the host's line in a pop-out or pop-up (Terry, 2026-11-03)."""
+_BUTTON_RED = "#ff4b4b"
+"""Start's, Restart's and Stop's background while they would do something, on the page and the host's line in a pop-out or pop-up: Streamlit's primary colour, which the page's Start has."""
+_BUTTON_TEXT = "#000000"
+"""The text on a button with a colour of its own: Leave Session, and Start, Restart and Stop while they would do something (Terry, 2026-11-04)."""
 _POP_CONTROLS = {"start": _START, "stop": "Stop", "reset": "Reset"}
 """The timer's buttons on the host's line in a pop-out or pop-up, by what each asks ``sessions.Registry.control`` to do."""
 
@@ -391,7 +396,7 @@ _DAYNIGHT_THEMES = {_DAY: LIGHT, _NIGHT: DARK}
 _DAYNIGHT_HTML = '<div class="daynight" role="group" aria-label="Show the panel by day or by night" hidden>' + "".join(
     f'<button type="button" data-d="{choice}">{choice.capitalize()}</button>' for choice in _DAYNIGHT_THEMES
 ) + "</div>"
-"""A viewer's Day/Night toggle (Terry, 2026-11-04), on its panel and pop-out or pop-up; a page's script keeps the choice (``hub``, shownLook). Each button is in the colours it stands for, whichever is on (v1.17, Terry: "Day" black on white, "Night" the opposite), so the one on is underlined (_SHARED_CSS)."""
+"""A viewer's Day/Night toggle (Terry, 2026-11-04), on its panel and pop-out or pop-up; a page's script keeps the choice (``hub``, shownLook). Each button is in the colours it stands for, whichever is on (v1.17, Terry: "Day" black on white, "Night" the opposite), with no mark on the one on: the panel's own background says it (Terry, 2026-11-04)."""
 
 
 def _cell(name: str, extra: str = "") -> str:
@@ -450,7 +455,6 @@ _SHARED_CSS = f"""
 .modes button.on {{ background: var(--text); color: var(--panel); }}
 .daynight button[data-d="{_DAY}"] {{ background: {_THEMES[LIGHT]["panel"]}; color: {_THEMES[LIGHT]["text"]}; }}
 .daynight button[data-d="{_NIGHT}"] {{ background: {_THEMES[DARK]["panel"]}; color: {_THEMES[DARK]["text"]}; }}
-.daynight button.on {{ text-decoration: underline; text-underline-offset: 2px; }}
 .daynight[hidden] {{ display: none; }}
 """
 
@@ -463,7 +467,7 @@ _GONE_TEXT = "Its SpeakerTime tab has gone: close this window."
 # maximized Zoom window on a single monitor (Terry, 2026-11-03).
 _PIP_HTML = (
     '<div class="stage">' + _row("elapsed", False) + _row("remaining", False) + _row("limit", False)
-    + f'<div class="bar">{_MODES_HTML}{_DAYNIGHT_HTML}<button class="buzz" type="button" data-host hidden>{_POP_BUZZ}</button>'
+    + f'<div class="bar">{_MODES_HTML}{_DAYNIGHT_HTML}<button class="buzz" type="button" data-host hidden>{_BUZZER_LABEL}</button>'
     + "".join(f'<button type="button" data-a="{action}" data-host hidden>{label}</button>' for action, label in _POP_CONTROLS.items())
     + "</div></div>"
     + f'<div class="gone-note">{_GONE_TEXT}</div>'
@@ -492,7 +496,9 @@ _PIP_CSS = f"""
   .bar > button {{ font: inherit; font-size: 14px; color: var(--text); background: transparent;
     border: 1px solid var(--line); border-radius: 8px; padding: 4px 12px; cursor: pointer; }}
   .bar > button:disabled {{ opacity: 0.35; cursor: default; }}
-  .bar > .buzz {{ border-color: var(--over); touch-action: none; user-select: none; -webkit-user-select: none; }}
+  .bar > [data-a="start"]:enabled, .bar > [data-a="stop"]:enabled {{ background: {_BUTTON_RED}; border-color: {_BUTTON_RED}; color: {_BUTTON_TEXT}; }}
+  .bar > .buzz {{ color: var(--over); font-weight: 700; background: var(--panel); border-color: var(--over);
+    touch-action: none; user-select: none; -webkit-user-select: none; }}
   .bar > .buzz.on {{ background: var(--over); color: var(--panel); }}
   .bar > [data-a="start"]::before {{ content: "{_RESTART}"; display: block; height: 0; overflow: hidden; visibility: hidden; }}
   .gone-note {{ display: none; font-size: max(14px, min(5vw, 7vh)); text-align: center; padding: 0 5vw; }}
@@ -972,7 +978,7 @@ const hub = () => (window.speakerTime ??= {{
     start.disabled = b.running;
     doc.querySelector('[data-a="stop"]').disabled = !b.running;
     doc.querySelector('[data-a="reset"]').disabled = !b.running && b.elapsed === 0;
-    doc.querySelector(".buzz").classList.toggle("on", this.buzzHeld);
+    doc.querySelector("button.buzz").classList.toggle("on", this.buzzHeld);  // not ".buzz": Time Remaining has that class while it reads BUZZ
   }},
 
   // The pop-out (popup false), or a plain pop-up (true): drawn and timed from
@@ -1108,7 +1114,9 @@ _CLOCK_CSS = f"""
   border: 1px solid var(--line); border-radius: 8px; padding: 4px 12px; cursor: pointer;
 }}
 .pop:hover {{ border-color: var(--text); }}
-.buzzer {{ border-color: var(--over); touch-action: none; user-select: none; -webkit-user-select: none; }}
+/* Red and bold on the panel's own background, Day or Night, the two swapped while held (Terry, 2026-11-04). */
+.buzzer {{ color: var(--over); font-weight: 700; background: var(--panel); border-color: var(--over);
+  touch-action: none; user-select: none; -webkit-user-select: none; }}
 .buzzer.on {{ background: var(--over); color: var(--panel); }}
 .note, .why, .buzz-note {{ font-size: 13px; text-align: center; margin-top: 6px; contain: inline-size; }}
 """
@@ -1453,7 +1461,7 @@ const openWindow = (h, win, popup) => {{
   for (const button of doc.querySelectorAll("[data-a]")) {{
     button.addEventListener("click", () => h.send?.("control", {{ action: button.dataset.a, n: Date.now() }}));
   }}
-  wireBuzzer(h, doc.querySelector(".buzz"), win);
+  wireBuzzer(h, doc.querySelector("button.buzz"), win);
   listen(h, win);
 }};
 
@@ -1544,8 +1552,6 @@ export default function (component) {{
   if (h.entered !== data.entered) {{
     h.entered = data.entered;
     h.fitting = fitStart(performance.now());
-    // A page that may scroll (_FIT_TEXT) starts at its top, not where the start screen was left to reach its buttons.
-    document.querySelector('[data-testid="stMain"]')?.scrollTo(0, 0);
     h.dayNight = null;  // read again: Leave Session may have forgotten it
   }}
   root.classList.toggle("host", data.host);
@@ -1839,6 +1845,18 @@ _PAGE_STYLE = """
   animation: speakertime-spin 0.9s linear infinite;
 }
 @keyframes speakertime-spin { to { transform: rotate(360deg); } }
+""" + f"""
+/* Leave Session black on orange (Terry, 2026-11-04), whatever the pointer is doing; Streamlit's own rules for a
+   hover or the focus would turn its text red, so these must win over them. */
+.st-key-{_LEAVE_BUTTON} button {{
+  background: {CLOCK_COLOURS["orange"]} !important; border-color: {CLOCK_COLOURS["orange"]} !important; color: {_BUTTON_TEXT} !important;
+}}
+.st-key-{_LEAVE_BUTTON} button:hover {{ filter: brightness(0.93); }}
+/* Start, Restart and Stop black on red while they would do something, greyed by Streamlit otherwise (Terry, 2026-11-04). */
+.st-key-{_START_BUTTON} button:enabled, .st-key-{_STOP_BUTTON} button:enabled {{
+  background: {_BUTTON_RED} !important; border-color: {_BUTTON_RED} !important; color: {_BUTTON_TEXT} !important;
+}}
+.st-key-{_START_BUTTON} button:enabled:hover, .st-key-{_STOP_BUTTON} button:enabled:hover {{ filter: brightness(0.93); }}
 </style>
 """
 
@@ -2370,7 +2388,7 @@ def _session_screen(sid: str, checked: Checked) -> None:
     if role == HOST:
         _host_controls(checked.shown)
     else:
-        st.button(_LEAVE_LABEL, on_click=_leave)
+        st.button(_LEAVE_LABEL, key=_LEAVE_BUTTON, on_click=_leave)
 
 
 def _host_controls(shown: Shown) -> None:
@@ -2402,12 +2420,12 @@ def _host_controls(shown: Shown) -> None:
     # timer has run, greyed or not (Terry, 2026-11-03), and Start again after Reset.
     start = _RESTART if shown.running or shown.elapsed > 0 else _START
     row.button(start, key=_START_BUTTON, on_click=_control, args=("start",), disabled=shown.running, type="primary")
-    row.button("Stop", on_click=_control, args=("stop",), disabled=not shown.running)
+    row.button("Stop", key=_STOP_BUTTON, on_click=_control, args=("stop",), disabled=not shown.running)
     row.button("Reset", on_click=_control, args=("reset",), disabled=not shown.running and shown.elapsed == 0)
     row.space("stretch")
     # Copy Link's work is in the browser, where the click may reach the clipboard (_CLOCK_JS, copyLink); its run does nothing.
     row.button(_COPY_LABEL, key=_COPY_BUTTON)
-    row.button(_LEAVE_LABEL, on_click=_leave)
+    row.button(_LEAVE_LABEL, key=_LEAVE_BUTTON, on_click=_leave)
 
 
 def _live(sid: str, role: str) -> None:

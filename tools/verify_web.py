@@ -92,6 +92,8 @@ def main() -> int:
     check("the ID shown in the box's place", a.session_state[web._BOX], sid)
     labels = {b.label: b.disabled for b in a.button}
     check("stopped and at zero: Start only", (labels["Start"], labels["Stop"], labels["Reset"]), (False, True, True))
+    check("the buttons the page's style colours have their keys (v1.19)",
+          (a.button(key=web._START_BUTTON).label, a.button(key=web._STOP_BUTTON).label, a.button(key=web._LEAVE_BUTTON).label), ("Start", "Stop", "Leave Session"))
 
     # The Time Limit, rounded; Start; then Stop is the button to press, Reset too.
     a.number_input(key=web._LIMIT_BOX).set_value(2.25).run()
