@@ -1063,15 +1063,18 @@ def buzzer_silent(browser, errors: list[str]) -> None:
         page.context.close()
 
 
+_BADGES_PX = 46
+"""How high Community Cloud's badges stand over the window's lower right corner (measured 2026-11-03): nothing locally shows them, so the fit is held clear of that height."""
+
 # How a page has been fitted to its window (v1.13): its two scales, whether the fit has ended, whether every element of
-# the page's column stands inside the window and nothing has a scroll bar, the panel's size as drawn, and the column's zoom.
+# the page's column stands inside the window, above the badges, and nothing has a scroll bar, the panel's size as drawn.
 _FIT_SEEN = f"""() => {{
   const main = document.querySelector('[data-testid="stMain"]'), h = window.speakerTime;
   const column = document.querySelector('[data-testid="stMainBlockContainer"] > [data-testid="stVerticalBlock"]');
   const kids = [...column.children].map(k => k.getBoundingClientRect());
   const r = {_CLOCK_ROOT}, scroll = r.querySelector('.scroll'), panel = r.querySelector('.clock').getBoundingClientRect();
   return {{ page: h.fitPage, panel: h.fitPanel, ended: h.fitting === null,
-           inside: Math.min(...kids.map(k => k.top)) >= 0 && Math.max(...kids.map(k => k.bottom)) <= innerHeight
+           inside: Math.min(...kids.map(k => k.top)) >= 0 && Math.max(...kids.map(k => k.bottom)) <= innerHeight - {_BADGES_PX}
              && Math.max(...kids.map(k => k.right)) <= innerWidth,
            bars: main.scrollHeight > main.clientHeight || main.scrollWidth > main.clientWidth || scroll.scrollWidth > scroll.clientWidth,
            size: [Math.round(panel.width), Math.round(panel.height)], window: [innerWidth, innerHeight] }};
@@ -1107,7 +1110,7 @@ def fitted_to_the_window(browser, errors: list[str], shot) -> None:
     ok("the host's page in a window of 1545 by 784: all of it inside, no scroll bar, the panel alone scaled",
        all_shown(seen) and seen["page"] == 1 and seen["panel"] < 1, seen)
     note = host.get_by_text(_COOKIE_TEXT).bounding_box()
-    ok("the cookie note inside the window too", note is not None and note["y"] + note["height"] <= 784, note)
+    ok("the cookie note inside the window too, above Community Cloud's badges", note is not None and note["y"] + note["height"] <= 784 - _BADGES_PX, note)
     shot(host, "12-fit-host.png")
     viewer = connected("INDIA", False, 1545, 784)
     seen = fit_of(viewer)

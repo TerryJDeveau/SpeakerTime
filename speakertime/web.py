@@ -1515,10 +1515,13 @@ export default function (component) {{
 """
 
 # The page's own styles: less space above the first line (a small window
-# beside the slides), and the pending screen's spinner.
+# beside the slides), room below the last for the badges Community Cloud lays
+# over the window's lower right corner (46 px high, measured 2026-11-03: at 2rem
+# they covered the end of the cookie note on a page fitted to a narrow window),
+# and the pending screen's spinner.
 _PAGE_STYLE = """
 <style>
-[data-testid="stMainBlockContainer"] { padding-top: 3.2rem; padding-bottom: 2rem; }
+[data-testid="stMainBlockContainer"] { padding-top: 3.2rem; padding-bottom: 3.2rem; }
 /* The page is wide so that the clock can span the window (Terry, 2026-11-03: twice the largest figures); everything
    else keeps the centred column it had (44rem, 704 px), each element where it stood in it. */
 [data-testid="stMainBlockContainer"] > [data-testid="stVerticalBlock"] > :not(.st-key-clock) {
