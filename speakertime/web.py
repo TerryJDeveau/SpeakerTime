@@ -198,6 +198,7 @@ _WARN_BOX = "warn_box"    # the Time Left Warning box (minutes)
 _PICKER = "warn_colours"  # the warning's colour buttons: their trigger, "pick"
 _PICKER_BOX = "warn_colours_box"  # their label and them
 _START_BUTTON = "start"   # the host's Start button, which reads Restart once the timer has run
+_LEAVE_BUTTON = "leave"   # Leave Session, coloured by _PAGE_STYLE through Streamlit's class .st-key-leave
 _COPY_BUTTON = "copy_link"  # the host's Copy Link button, found by the page's script by this key (Streamlit's class .st-key-copy_link)
 _TOKENS = "tokens"        # the host's token of each session this browser hosted: {sid: token}
 _BROWSER = "browser"      # this browser's id (None if its script could not say)
@@ -353,6 +354,8 @@ _COPY_SHOWN_MS = 1500
 """What the Copy Link button says after a press, for this long."""
 _POP_BUZZ = "Buzz"
 """The Buzzer's label on the host's line in a pop-out or pop-up (Terry, 2026-11-03)."""
+_BUTTON_TEXT = "#000000"
+"""The text on a button with a colour of its own: Leave Session, and Start, Restart and Stop while they would do something (Terry, 2026-11-04)."""
 _POP_CONTROLS = {"start": _START, "stop": "Stop", "reset": "Reset"}
 """The timer's buttons on the host's line in a pop-out or pop-up, by what each asks ``sessions.Registry.control`` to do."""
 
@@ -1839,6 +1842,13 @@ _PAGE_STYLE = """
   animation: speakertime-spin 0.9s linear infinite;
 }
 @keyframes speakertime-spin { to { transform: rotate(360deg); } }
+""" + f"""
+/* Leave Session black on orange (Terry, 2026-11-04), whatever the pointer is doing; Streamlit's own rules for a
+   hover or the focus would turn its text red, so these must win over them. */
+.st-key-{_LEAVE_BUTTON} button {{
+  background: {CLOCK_COLOURS["orange"]} !important; border-color: {CLOCK_COLOURS["orange"]} !important; color: {_BUTTON_TEXT} !important;
+}}
+.st-key-{_LEAVE_BUTTON} button:hover {{ filter: brightness(0.93); }}
 </style>
 """
 
@@ -2370,7 +2380,7 @@ def _session_screen(sid: str, checked: Checked) -> None:
     if role == HOST:
         _host_controls(checked.shown)
     else:
-        st.button(_LEAVE_LABEL, on_click=_leave)
+        st.button(_LEAVE_LABEL, key=_LEAVE_BUTTON, on_click=_leave)
 
 
 def _host_controls(shown: Shown) -> None:
@@ -2407,7 +2417,7 @@ def _host_controls(shown: Shown) -> None:
     row.space("stretch")
     # Copy Link's work is in the browser, where the click may reach the clipboard (_CLOCK_JS, copyLink); its run does nothing.
     row.button(_COPY_LABEL, key=_COPY_BUTTON)
-    row.button(_LEAVE_LABEL, on_click=_leave)
+    row.button(_LEAVE_LABEL, key=_LEAVE_BUTTON, on_click=_leave)
 
 
 def _live(sid: str, role: str) -> None:
