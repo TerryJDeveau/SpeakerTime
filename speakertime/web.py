@@ -1991,8 +1991,6 @@ def _enter(sid: str, checked: Checked) -> None:
         if checked.token:
             _tokens()[sid] = checked.token
         host = (sid, token) if token else None
-        state[_LIMIT_BOX] = checked.shown.limit
-        state[_WARN_BOX] = checked.shown.warning
     _cookie_change(sid, first=sid, host=host)
 
 
@@ -2222,9 +2220,7 @@ def _control_sent() -> None:
 
 
 def _limit_changed() -> None:
-    limit = limit_minutes(st.session_state.get(_LIMIT_BOX))
-    st.session_state[_LIMIT_BOX] = limit  # shown as it is used: to a tenth
-    _control("limit", limit)
+    _control("limit", limit_minutes(st.session_state.get(_LIMIT_BOX)))
 
 
 def _clock_sent(name: str) -> object:
@@ -2268,9 +2264,7 @@ def _colour_changed() -> None:
 
 
 def _warning_changed() -> None:
-    warning = limit_minutes(st.session_state.get(_WARN_BOX))
-    st.session_state[_WARN_BOX] = warning  # shown as it is used: to a tenth
-    _control("warning", warning)
+    _control("warning", limit_minutes(st.session_state.get(_WARN_BOX)))
 
 
 def _warning_colour_picked() -> None:
@@ -2381,15 +2375,20 @@ def _session_screen(sid: str, checked: Checked) -> None:
 
 def _host_controls(shown: Shown) -> None:
     """The Time Limit, and to its right the Time Left Warning and its colour buttons (Terry, 2026-11-01); Start, Stop and Reset, with Copy Link and Leave Session at the row's right (Terry, 2026-11-04)."""
-    st.session_state.setdefault(_LIMIT_BOX, shown.limit)
-    st.session_state.setdefault(_WARN_BOX, shown.warning)
+    # The session's values at every laying out, as they are used (to a tenth), not only on entering. A value written here
+    # reaches the browser once, with this run's box, and a check-in waiting when the run begins takes the write past the
+    # box (Streamlit's on_script_will_rerun). A box laid out without its value starts at its default, 0.0, and the next
+    # check-in reports that as the host's change, so the session loses its limit (seen on a viewer's Yes; v1.18).
+    # value=None: Streamlit reads a box cleared as its default, so with none a box cleared stays blank (Terry, 2026-11-04).
+    st.session_state[_LIMIT_BOX] = shown.limit
+    st.session_state[_WARN_BOX] = shown.warning
     row = st.container(horizontal=True, vertical_alignment="bottom", wrap=True)
     row.number_input(
-        "Time Limit (minutes)", key=_LIMIT_BOX, min_value=None, step=1.0, format="%.1f",
+        "Time Limit (minutes)", key=_LIMIT_BOX, value=None, min_value=None, step=1.0, format="%.1f",
         help=_LIMIT_HELP, placeholder="Blank: no limit", on_change=_limit_changed, width=200,
     )
     row.number_input(
-        "Time Left Warning (minutes)", key=_WARN_BOX, min_value=None, step=1.0, format="%.1f",
+        "Time Left Warning (minutes)", key=_WARN_BOX, value=None, min_value=None, step=1.0, format="%.1f",
         help=_WARNING_HELP, placeholder="Blank: none", on_change=_warning_changed, width=220,
     )
     buttons, chosen = shown.warning_buttons()

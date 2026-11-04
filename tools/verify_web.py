@@ -99,6 +99,20 @@ def main() -> int:
     check("limit kept in the session", REGISTRY.shown(sid).limit, 2.3)
     a.number_input(key=web._WARN_BOX).set_value(0.55).run()
     check("warning rounded in its box, kept in the session", (a.number_input(key=web._WARN_BOX).value, REGISTRY.shown(sid).warning), (0.6, 0.6))
+    # The boxes take the session's values at every laying out, not only on entering (v1.18).
+    REGISTRY._sessions[sid].timer.limit = 3.0
+    REGISTRY._sessions[sid].warning = 1.0
+    a.run()
+    check("each box takes the session's value at every laying out",
+          (a.number_input(key=web._LIMIT_BOX).value, a.number_input(key=web._WARN_BOX).value), (3.0, 1.0))
+    a.number_input(key=web._LIMIT_BOX).set_value(None).run()
+    a.number_input(key=web._WARN_BOX).set_value(None).run()
+    shown = REGISTRY.shown(sid)
+    check("each box cleared stays blank, and the session has none",
+          (a.number_input(key=web._LIMIT_BOX).value, a.number_input(key=web._WARN_BOX).value, shown.limit, shown.warning), (None, None, None, None))
+    REGISTRY._sessions[sid].timer.limit = 2.3
+    REGISTRY._sessions[sid].warning = 0.6
+    a.run()
     button(a, "Start").click().run()
     labels = {b.label: b.disabled for b in a.button}
     check("running: Stop and Reset, Start greyed and reading Restart (v1.11)",

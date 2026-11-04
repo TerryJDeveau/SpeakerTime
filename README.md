@@ -15,7 +15,8 @@ running, and goes on from where it stopped; after Reset it reads Start
 again (v1.11). Time Remaining is the Time Limit minus
 Elapsed Time. It turns red and blinks when it reaches zero, and once the limit
 is passed it goes negative and its label reads **Overtime**, red and blinking
-too; with a blank, 0 or negative limit it stays at zero (and plain). The
+too; with a blank, 0 or negative limit it stays at zero (and plain), and a box
+cleared stays blank (v1.18). The
 slider on the right of each timer sets its size on every viewer's panel and
 pop-out as well as the host's, from 25 to 800, starting at 200 (800 is four
 times 200's size). The panel is as wide as its figures need, not as the

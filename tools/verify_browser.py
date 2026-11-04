@@ -8,7 +8,8 @@ window, the pop-ups offered while another tab of the browser has it, a
 tab holding an earlier version's state, the host's Buzzer, the page fitted
 to its window on connecting, the host's line in a pop-out or pop-up, a
 link that connects by itself, a viewer's Day and Night, the host's row with Copy
-Link, and the frame's minimum in a small window.
+Link, the frame's minimum in a small window, a viewer's Yes with check-ins
+waiting, and a box cleared.
 Prints each check and exits 1 on any failure.
 
 Needs Playwright (``pip install playwright``) and a Chromium: ``--chrome``
@@ -418,6 +419,8 @@ def run(url: str, launch: dict, shots: Path | None) -> None:
         day_and_night(browser, errors, shot)
         host_row_and_link(browser, errors, shot)
         frame_minimum_and_recovery(browser, errors)
+        yes_with_check_ins_waiting(browser, errors)
+        box_cleared(browser, errors)
 
         ok("no script errors on any page", not errors, errors)
         browser.close()
@@ -1805,6 +1808,90 @@ def frame_minimum_and_recovery(browser, errors: list[str]) -> None:
         creator.context.close()
         context.close()
     host.context.close()
+
+
+_KICKS_START = "() => { window.speakerTimeKicks = setInterval(() => window.speakerTime.kick(), 3); }"
+_KICKS_STOP = "() => clearInterval(window.speakerTimeKicks)"
+_WARNING_SHOWN = f"""() => {_CLOCK_ROOT}.querySelector('[data-v="warning"]').textContent"""
+
+
+def yes_with_check_ins_waiting(browser, errors: list[str]) -> None:
+    """27. A viewer's Yes keeps the session's Time Limit and warning with a check-in waiting, as one may be when it comes: before v1.18 the new host's boxes came up at 0.0, and the next check-in reported that as the host's change (1 full run of 8; every try here)."""
+    def connected(context, sid: str, create: bool) -> Page:
+        page = context.new_page()
+        page.on("pageerror", lambda error: errors.append(f"yes: {error}"))
+        page.goto(profile_url)
+        page.locator('[data-testid="stApp"]').wait_for()
+        page.wait_for_timeout(1500)
+        id_box(page).fill(sid)
+        button(page, "Create New Session" if create else "Connect to Session").click()
+        page.get_by_text("You are the host." if create else "You are viewing it.").wait_for(timeout=8000)
+        return page
+
+    for attempt in (1, 2):
+        sid = f"KEEP{attempt}"
+        contexts = [browser.new_context(viewport={"width": 800, "height": 1500}) for _ in range(2)]
+        host = connected(contexts[0], sid, True)
+        warning = host.get_by_role("spinbutton", name="Time Left Warning (minutes)")
+        limit_box(host).fill("2.25")
+        limit_box(host).press("Enter")
+        host.wait_for_timeout(800)
+        warning.fill("1")
+        warning.press("Enter")
+        host.wait_for_timeout(800)
+        viewer = connected(contexts[1], sid, False)
+        viewer.wait_for_timeout(1200)
+        before = (clock(viewer)["limit"], on_clock(viewer, _WARNING_SHOWN))
+        host.close()
+        button(viewer, "Yes").wait_for(timeout=(HOST_GRACE_S + 15) * 1000)
+        viewer.evaluate(_KICKS_START)
+        viewer.wait_for_timeout(300)
+        button(viewer, "Yes").click()
+        viewer.get_by_text("You are the host.").wait_for(timeout=15000)
+        viewer.wait_for_timeout(3000)
+        viewer.evaluate(_KICKS_STOP)
+        viewer.wait_for_timeout(2500)
+        after = (clock(viewer)["limit"], on_clock(viewer, _WARNING_SHOWN))
+        boxes = (limit_box(viewer).input_value(), viewer.get_by_role("spinbutton", name="Time Left Warning (minutes)").input_value())
+        ok(f"a Yes with check-ins waiting (try {attempt}): the Time Limit and warning kept, on the panel and in the host's boxes",
+           after == before == ("2:18", "1:00") and boxes == ("2.3", "1.0"), [before, after, boxes])
+        for context in contexts:
+            context.close()
+
+
+def box_cleared(browser, errors: list[str]) -> None:
+    """28. A Time Limit or warning box cleared stays blank, its hint showing, and stays so through a reload; 0 typed shows as 0.0; either way, no limit (Terry, 2026-11-04: it filled back with 0.0)."""
+    page = browser.new_context(viewport={"width": 800, "height": 1500}).new_page()
+    page.on("pageerror", lambda error: errors.append(f"cleared: {error}"))
+    page.goto(profile_url)
+    page.locator('[data-testid="stApp"]').wait_for()
+    page.wait_for_timeout(1500)
+    id_box(page).fill("CLEARED")
+    button(page, "Create New Session").click()
+    page.get_by_text("You are the host.").wait_for(timeout=8000)
+    warning = page.get_by_role("spinbutton", name="Time Left Warning (minutes)")
+
+    def enter(box, text: str) -> None:
+        box.fill(text)
+        box.press("Enter")
+        page.wait_for_timeout(1500)
+
+    enter(limit_box(page), "5")
+    enter(warning, "1")
+    ok("both set: 5:00 on the panel", (clock(page)["limit"], limit_box(page).input_value(), warning.input_value()) == ("5:00", "5.0", "1.0"), clock(page))
+    enter(limit_box(page), "")
+    enter(warning, "")
+    seen = (clock(page)["limit"], limit_box(page).input_value(), warning.input_value())
+    ok("both cleared: blank, no limit on the panel", seen == ("none", "", ""), seen)
+    page.reload()
+    page.get_by_text("You are the host.").wait_for(timeout=8000)
+    page.wait_for_timeout(1500)
+    seen = (clock(page)["limit"], limit_box(page).input_value(), warning.input_value())
+    ok("still blank after a reload", seen == ("none", "", ""), seen)
+    enter(limit_box(page), "0")
+    seen = (clock(page)["limit"], limit_box(page).input_value())
+    ok("0 typed: shown as 0.0, no limit on the panel", seen == ("none", "0.0"), seen)
+    page.context.close()
 
 
 profile_url = ""
