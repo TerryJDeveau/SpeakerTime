@@ -352,17 +352,10 @@ _LABELS = {
 }
 """The labels in each way of showing the times; "overtime" is Remaining's while it is negative."""
 
-_POP_MODE_NAMES = {CLOCK: "H:M:S", MINUTES: "Min"}
-"""The switch's two buttons in a pop-out or pop-up, shorter, so that the host's whole line fits on one row (Terry, 2026-11-03)."""
-
-
-def _modes_html(names: dict[str, str]) -> str:
-    return '<div class="modes" role="group" aria-label="Show the times as">' + "".join(
-        f'<button type="button" data-m="{mode}">{name}</button>' for mode, name in names.items()
-    ) + "</div>"
-
-
-_MODES_HTML = _modes_html(_MODE_NAMES)
+_MODES_HTML = '<div class="modes" role="group" aria-label="Show the times as">' + "".join(
+    f'<button type="button" data-m="{mode}">{name}</button>' for mode, name in _MODE_NAMES.items()
+) + "</div>"
+"""The switch, the same on a panel, a pop-out and a pop-up (Terry, 2026-11-04: of v1.15's shorter H:M:S and Min in the last two, "didn't improve anything")."""
 
 
 def _cell(name: str, extra: str = "") -> str:
@@ -430,7 +423,7 @@ _GONE_TEXT = "Its SpeakerTime tab has gone: close this window."
 # maximized Zoom window on a single monitor (Terry, 2026-11-03).
 _PIP_HTML = (
     '<div class="stage">' + _row("elapsed", False) + _row("remaining", False) + _row("limit", False)
-    + f'<div class="bar">{_modes_html(_POP_MODE_NAMES)}<button class="buzz" type="button" data-host hidden>{_POP_BUZZ}</button>'
+    + f'<div class="bar">{_MODES_HTML}<button class="buzz" type="button" data-host hidden>{_POP_BUZZ}</button>'
     + "".join(f'<button type="button" data-a="{action}" data-host hidden>{label}</button>' for action, label in _POP_CONTROLS.items())
     + "</div></div>"
     + f'<div class="gone-note">{_GONE_TEXT}</div>'
@@ -1166,7 +1159,15 @@ const fit = (h, root) => {{
     document.documentElement.style.setProperty("--speakertime-page", String(want.page));
     document.documentElement.style.setProperty("--speakertime-panel", String(want.panel));
     f.changed = now;
+  }};
+  const smaller = want.page < h.fitPage - 0.001 || want.panel < h.fitPanel - 0.001;
+  const larger = want.page > h.fitPage + 0.01 || want.panel > h.fitPanel + 0.01;
+  if (smaller || (larger && now - f.at < FIT_GROW_MS)) {{
+    apply();
   }} else if (now - f.changed > FIT_SETTLED_MS) {{
+    // A last look, the page having settled, may still raise them once: what was measured while it arrived was not
+    // the page. Seen once, 2026-11-04: a page left at the smallest scale that a reload fitted at 1 and 0.609.
+    if (larger) apply();
     h.fitting = null;
   }}
 }};
