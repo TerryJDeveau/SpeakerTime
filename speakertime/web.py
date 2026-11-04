@@ -391,7 +391,7 @@ _DAYNIGHT_THEMES = {_DAY: LIGHT, _NIGHT: DARK}
 _DAYNIGHT_HTML = '<div class="daynight" role="group" aria-label="Show the panel by day or by night" hidden>' + "".join(
     f'<button type="button" data-d="{choice}">{choice.capitalize()}</button>' for choice in _DAYNIGHT_THEMES
 ) + "</div>"
-"""A viewer's Day/Night toggle (Terry, 2026-11-04), on its panel and pop-out or pop-up; a page's script keeps the choice (``hub``, shownLook)."""
+"""A viewer's Day/Night toggle (Terry, 2026-11-04), on its panel and pop-out or pop-up; a page's script keeps the choice (``hub``, shownLook). Each button is in the colours it stands for, whichever is on (v1.17, Terry: "Day" black on white, "Night" the opposite), so the one on is underlined (_SHARED_CSS)."""
 
 
 def _cell(name: str, extra: str = "") -> str:
@@ -447,7 +447,10 @@ _SHARED_CSS = f"""
 .pair .cell {{ flex: 0 1 auto; min-width: 0; }}
 .pair .label {{ text-align: center; }}
 .pair .cell[hidden] {{ display: none; }}
-.modes button.on, .daynight button.on {{ background: var(--text); color: var(--panel); }}
+.modes button.on {{ background: var(--text); color: var(--panel); }}
+.daynight button[data-d="{_DAY}"] {{ background: {_THEMES[LIGHT]["panel"]}; color: {_THEMES[LIGHT]["text"]}; }}
+.daynight button[data-d="{_NIGHT}"] {{ background: {_THEMES[DARK]["panel"]}; color: {_THEMES[DARK]["text"]}; }}
+.daynight button.on {{ text-decoration: underline; text-underline-offset: 2px; }}
 .daynight[hidden] {{ display: none; }}
 """
 
