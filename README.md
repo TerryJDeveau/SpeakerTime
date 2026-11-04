@@ -29,9 +29,10 @@ within the page and the figures shrink to fit it, as before.
 session, as host or viewer (a reload counts), it is scaled so that all of it
 is inside the browser tab's window, the text around the panel and the cookie
 note included, with no scroll bar. It is scaled down only, never up. The panel
-shrinks first, buttons and all, and the text around it keeps its size; in a
-window too short for that (the panel would have under a third of its height)
-the whole page's column shrinks as well. After that the scale stays as it is:
+shrinks first, buttons and all, and the text around it keeps its size. In a
+small window the panel keeps two thirds of the height, up to 250 pixels as drawn
+(v1.16: its minimum doubled), and the whole page's column shrinks to leave it
+that, so the text around it may get small. After that the scale stays as it is:
 moving a slider or resizing the window does not change it, and a reload fits
 the page again.
 
@@ -46,17 +47,28 @@ host's own pop-out follows the host's sliders, while a viewer's keeps its
 size and scales its contents to fit it instead.
 
 **Running the session from a pop-out** (v1.15): the host's pop-out or pop-up
-has one line under the timers: the **H:M:S | Min** switch, **Buzz**,
+has one line under the timers: the **H:MM:SS | MMM.M** switch, **Buzz**,
 **Start** (or **Restart**), **Stop** and **Reset**. They work as the page's own
 buttons do and are greyed in the same way, so a host on a single monitor,
 with Zoom maximized, can run the session without switching windows. A viewer's
-has the switch alone.
+has the switch and Day/Night.
 
 **Colours**: beside each slider, a column of colour buttons sets that
 timer's colour for everyone: white (the default), black, yellow, orange,
 green, blue and magenta (never red: red means time is out). Choosing black
 for one timer turns the other black too if it was white, and turns the
 panel white with black text; choosing white does the opposite.
+
+**Day and Night** (v1.16): a toggle on a viewer's panel and pop-out or pop-up.
+Until the viewer presses the one not shown it has no effect, and the panel
+follows the host. Once pressed, the background is white (Day) or black (Night)
+whatever the host chooses, and the text goes with it, a timer's figures too where
+they are black or white. The host's other colours still come through; a change
+of the host's that would force the other of night and day is ignored, and the
+timer stays as it was. A page and its pop-out share one choice. It is kept for
+that session in a cookie, so a reload keeps it and another session starts from
+the default; **Leave Session** forgets it. It stays in the viewer's browser and
+changes nothing for anyone else.
 
 **Time Left Warning**: to the right of the Time Limit box, in minutes (blank
 for none). Once set, it shows beside the Time Limit on every panel and
@@ -90,8 +102,7 @@ are on one machine or in one room.
 **H:MM:SS or MMM.M**: the switch under the timers shows them as hours, minutes
 and seconds, or as minutes to a tenth ("12.5"). Every panel and every pop-out
 has its own switch. A panel starts at the host's choice when it opens, and
-goes back to it whenever a host connects; a pop-out starts at its panel's. In
-a pop-out or pop-up the switch's buttons read **H:M:S** and **Min**.
+goes back to it whenever a host connects; a pop-out starts at its panel's.
 
 **A viewer**: type the session's ID and press **Connect to Session**. If the
 host has not created it yet, the page waits ("Please wait, connection
@@ -106,6 +117,10 @@ the session's host key and no other page is hosting it. A browser lets a page
 sound only once it has been clicked, so a speaker who wants the buzzer clicks
 once on the page, as its note says. **Leave Session** and **Cancel** take the
 session out of the address, so that a reload does not go back.
+
+**Copy Link** (v1.16), on the host's row beside **Leave Session**, puts that
+link on the clipboard. It holds the session and nothing else, so a host's own
+`?silent` is not passed on.
 
 Session IDs: letters, numbers and the characters `- _ . # @ + &`, at most 20.
 Spaces, tabs and other characters are ignored, and so is case: "room 5b" and
