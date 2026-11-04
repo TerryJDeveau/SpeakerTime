@@ -12,7 +12,8 @@ minutes, to one decimal place (2.5 is two and a half minutes), and use
 **Start**, **Stop** (a pause) and **Reset** (pressed while running, it stops
 the timer too). Once the timer has run, Start reads **Restart**, greyed while
 running, and goes on from where it stopped; after Reset it reads Start
-again (v1.11). Time Remaining is the Time Limit minus
+again (v1.11). Start or Restart while stopped, and Stop while running, are
+black on red; each is greyed otherwise (v1.19). Time Remaining is the Time Limit minus
 Elapsed Time. It turns red and blinks when it reaches zero, and once the limit
 is passed it goes negative and its label reads **Overtime**, red and blinking
 too; with a blank, 0 or negative limit it stays at zero (and plain), and a box
@@ -51,7 +52,7 @@ size and scales its contents to fit it instead.
 **Running the session from a pop-out** (v1.15): the host's pop-out or pop-up
 has one line under the timers: the **H:MM:SS | MMM.M** switch, **Buzz**,
 **Start** (or **Restart**), **Stop** and **Reset**. They work as the page's own
-buttons do and are greyed in the same way, so a host on a single monitor,
+buttons do and are coloured and greyed in the same way, so a host on a single monitor,
 with Zoom maximized, can run the session without switching windows. A viewer's
 has the switch and Day/Night.
 
@@ -83,8 +84,9 @@ Time Remaining is white or black, and otherwise the colour opposite Time
 Remaining's on the colour wheel (the **A** button); the four buttons after it
 are other colours to choose instead.
 
-**Buzzer** (v1.10): on the host's panel, beside Pop out, and on the host's
-pop-out or pop-up, where it reads **Buzz** (v1.15). While the host
+**Buzz** (v1.10): on the host's panel, beside Pop out, and on the host's
+pop-out or pop-up, bold red on the panel's own background, the two swapped
+while it is held (v1.19). While the host
 holds it down (the mouse button, a finger, or Space or Enter on it), Time
 Remaining reads **BUZZ** in steady red on every panel and pop-out, the
 host's included, and a buzzer sounds on every page of the session, the
@@ -144,7 +146,7 @@ With several, it offers a **Rejoin** button for each. One browser can host
 several sessions, view several, or both, each in a window of its own; a
 host and a viewer of the same session can be two tabs of one browser (handy
 for trying it out): only the host's own tab is the host again after a reload.
-**Leave Session** forgets the session.
+**Leave Session**, black on orange (v1.19), forgets the session.
 
 **A session used before**: a session nobody has open goes six hours later
 (or when the app restarts), but its settings are kept: **Create New
