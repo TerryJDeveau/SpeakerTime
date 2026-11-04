@@ -331,7 +331,8 @@ intensive throttling), the fragment's among them; the pop-out window is
 shown, so its timers are not slowed.
 """
 
-_BUZZER_LABEL = "Buzzer"
+_BUZZER_LABEL = "Buzz"
+"""The Buzzer's label, on the panel and the host's line in a pop-out or pop-up (Terry, 2026-11-04)."""
 _BUZZ_TEXT = "BUZZ"
 """Time Remaining's figures while the host holds the Buzzer, in the out-of-time red, steady."""
 _BUZZ_NOTE = "Click anywhere on this page once so that it can sound the buzzer."
@@ -353,8 +354,6 @@ _COPIED_LABEL = "Copied"
 _NOT_COPIED_LABEL = "Could not copy"
 _COPY_SHOWN_MS = 1500
 """What the Copy Link button says after a press, for this long."""
-_POP_BUZZ = "Buzz"
-"""The Buzzer's label on the host's line in a pop-out or pop-up (Terry, 2026-11-03)."""
 _BUTTON_RED = "#ff4b4b"
 """Start's, Restart's and Stop's background while they would do something, on the page and the host's line in a pop-out or pop-up: Streamlit's primary colour, which the page's Start has."""
 _BUTTON_TEXT = "#000000"
@@ -469,7 +468,7 @@ _GONE_TEXT = "Its SpeakerTime tab has gone: close this window."
 # maximized Zoom window on a single monitor (Terry, 2026-11-03).
 _PIP_HTML = (
     '<div class="stage">' + _row("elapsed", False) + _row("remaining", False) + _row("limit", False)
-    + f'<div class="bar">{_MODES_HTML}{_DAYNIGHT_HTML}<button class="buzz" type="button" data-host hidden>{_POP_BUZZ}</button>'
+    + f'<div class="bar">{_MODES_HTML}{_DAYNIGHT_HTML}<button class="buzz" type="button" data-host hidden>{_BUZZER_LABEL}</button>'
     + "".join(f'<button type="button" data-a="{action}" data-host hidden>{label}</button>' for action, label in _POP_CONTROLS.items())
     + "</div></div>"
     + f'<div class="gone-note">{_GONE_TEXT}</div>'
@@ -499,7 +498,8 @@ _PIP_CSS = f"""
     border: 1px solid var(--line); border-radius: 8px; padding: 4px 12px; cursor: pointer; }}
   .bar > button:disabled {{ opacity: 0.35; cursor: default; }}
   .bar > [data-a="start"]:enabled, .bar > [data-a="stop"]:enabled {{ background: {_BUTTON_RED}; border-color: {_BUTTON_RED}; color: {_BUTTON_TEXT}; }}
-  .bar > .buzz {{ border-color: var(--over); touch-action: none; user-select: none; -webkit-user-select: none; }}
+  .bar > .buzz {{ color: var(--over); font-weight: 700; background: var(--panel); border-color: var(--over);
+    touch-action: none; user-select: none; -webkit-user-select: none; }}
   .bar > .buzz.on {{ background: var(--over); color: var(--panel); }}
   .bar > [data-a="start"]::before {{ content: "{_RESTART}"; display: block; height: 0; overflow: hidden; visibility: hidden; }}
   .gone-note {{ display: none; font-size: max(14px, min(5vw, 7vh)); text-align: center; padding: 0 5vw; }}
@@ -1115,7 +1115,9 @@ _CLOCK_CSS = f"""
   border: 1px solid var(--line); border-radius: 8px; padding: 4px 12px; cursor: pointer;
 }}
 .pop:hover {{ border-color: var(--text); }}
-.buzzer {{ border-color: var(--over); touch-action: none; user-select: none; -webkit-user-select: none; }}
+/* Red and bold on the panel's own background, Day or Night, the two swapped while held (Terry, 2026-11-04). */
+.buzzer {{ color: var(--over); font-weight: 700; background: var(--panel); border-color: var(--over);
+  touch-action: none; user-select: none; -webkit-user-select: none; }}
 .buzzer.on {{ background: var(--over); color: var(--panel); }}
 .note, .why, .buzz-note {{ font-size: 13px; text-align: center; margin-top: 6px; contain: inline-size; }}
 """
