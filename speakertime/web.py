@@ -178,6 +178,7 @@ _LIMIT_BOX = "limit_box"  # the Time Limit box (minutes)
 _WARN_BOX = "warn_box"    # the Time Left Warning box (minutes)
 _PICKER = "warn_colours"  # the warning's colour buttons: their trigger, "pick"
 _START_BUTTON = "start"   # the host's Start button, which reads Restart once the timer has run
+_COPY_BUTTON = "copy_link"  # the host's Copy Link button, found by the page's script by this key (Streamlit's class .st-key-copy_link)
 _TOKENS = "tokens"        # the host's token of each session this browser hosted: {sid: token}
 _BROWSER = "browser"      # this browser's id (None if its script could not say)
 _TAB = "tab"              # this tab's id (None if its script could not say)
@@ -322,6 +323,12 @@ _SESSION_SWITCH = "session"
 _START = "Start"
 _RESTART = "Restart"
 """The Start button's label once the timer has run (Elapsed not zero), running or stopped: Start goes on from there."""
+_LEAVE_LABEL = "Leave Session"
+_COPY_LABEL = "Copy Link"
+_COPIED_LABEL = "Copied"
+_NOT_COPIED_LABEL = "Could not copy"
+_COPY_SHOWN_MS = 1500
+"""What the Copy Link button says after a press, for this long."""
 _POP_BUZZ = "Buzz"
 """The Buzzer's label on the host's line in a pop-out or pop-up (Terry, 2026-11-03)."""
 _POP_CONTROLS = {"start": _START, "stop": "Stop", "reset": "Reset"}
@@ -1056,6 +1063,12 @@ const POPUP_FEATURES = {json.dumps(_POPUP_FEATURES)};
 const PIP_SIZE = {{ width: 340, height: 280 }};
 const BUZZ_RESEND_MS = {_BUZZ_RESEND_MS};
 const BUZZ_CHECK_MS = {_BUZZ_CHECK_MS};
+const SESSION_SWITCH = {json.dumps(_SESSION_SWITCH)};
+const COPY_BUTTON = {json.dumps(f".st-key-{_COPY_BUTTON} button")};
+const COPY_LABEL = {json.dumps(_COPY_LABEL)};
+const COPIED_LABEL = {json.dumps(_COPIED_LABEL)};
+const NOT_COPIED_LABEL = {json.dumps(_NOT_COPIED_LABEL)};
+const COPY_SHOWN_MS = {_COPY_SHOWN_MS};
 const FIT_SHARE = {_FIT_SHARE};
 const FIT_PANEL_PX = {_FIT_PANEL_PX};
 const FIT_LEAST = {_FIT_LEAST};
@@ -1194,6 +1207,42 @@ const drawPanel = (h) => {{
   const deaf = root.querySelector(".buzz-note");
   const hidden = h.host !== false || h.silent || h.mayPlay();
   if (deaf.hidden !== hidden) deaf.hidden = hidden;
+}};
+
+// Copy Link (Terry, 2026-11-04): the address that connects to this session by
+// itself (session_asked), with none of this page's own switches, so never
+// ?silent. The page's address without its query, the top window's: on Community
+// Cloud the app runs in a frame of the same origin. The clipboard's API where
+// the browser allows it, else the older way, both within the click's activation.
+const copyLink = async (h, button) => {{
+  if (h.base === null) return;
+  let place = location;
+  try {{ place = window.top.location; }} catch (error) {{}}
+  const link = place.origin + place.pathname + "?" + SESSION_SWITCH + "=" + encodeURIComponent(h.base.sid);
+  let copied = false;
+  try {{
+    await navigator.clipboard.writeText(link);
+    copied = true;
+  }} catch (error) {{
+    const box = document.createElement("textarea");
+    box.value = link;
+    box.style.position = "fixed";
+    box.style.opacity = "0";
+    document.body.appendChild(box);
+    box.select();
+    try {{ copied = document.execCommand("copy"); }} catch (older) {{}}
+    box.remove();
+  }}
+  // Said on the button, its width kept: only the text node changes, which Streamlit's next run leaves alone or lays out afresh.
+  const text = button.querySelector("p")?.firstChild;
+  if (!text) return;
+  clearTimeout(h.copyTimer);
+  button.style.minWidth = button.offsetWidth + "px";
+  text.nodeValue = copied ? COPIED_LABEL : NOT_COPIED_LABEL;
+  h.copyTimer = setTimeout(() => {{
+    text.nodeValue = COPY_LABEL;
+    button.style.minWidth = "";
+  }}, COPY_SHOWN_MS);
 }};
 
 // The host's Buzzer to the server, as this page holds it now, through the
@@ -1378,6 +1427,11 @@ export default function (component) {{
     h.listening = true;
     h.keepBuzz = () => keepBuzz(h);
     listen(h, window);
+    // On the document, once: Streamlit lays the button out afresh on its runs. Before Streamlit's own handler, whose run may rebuild it.
+    document.addEventListener("click", (event) => {{
+      const button = event.target.closest?.(COPY_BUTTON);
+      if (button) copyLink(h, button);
+    }}, true);
   }}
   if (data.host) {{
     for (const slider of root.querySelectorAll("input.size")) {{
@@ -2170,11 +2224,12 @@ def _session_screen(sid: str, checked: Checked) -> None:
           on_control_change=_control_sent)
     if role == HOST:
         _host_controls(checked.shown)
-    st.button("Leave Session", on_click=_leave)
+    else:
+        st.button(_LEAVE_LABEL, on_click=_leave)
 
 
 def _host_controls(shown: Shown) -> None:
-    """The Time Limit, and to its right the Time Left Warning and its colour buttons (Terry, 2026-11-01); Start, Stop and Reset."""
+    """The Time Limit, and to its right the Time Left Warning and its colour buttons (Terry, 2026-11-01); Start, Stop and Reset, with Copy Link and Leave Session at the row's right (Terry, 2026-11-04)."""
     st.session_state.setdefault(_LIMIT_BOX, shown.limit)
     st.session_state.setdefault(_WARN_BOX, shown.warning)
     row = st.container(horizontal=True, vertical_alignment="bottom", wrap=True)
@@ -2197,6 +2252,10 @@ def _host_controls(shown: Shown) -> None:
     row.button(start, key=_START_BUTTON, on_click=_control, args=("start",), disabled=shown.running, type="primary")
     row.button("Stop", on_click=_control, args=("stop",), disabled=not shown.running)
     row.button("Reset", on_click=_control, args=("reset",), disabled=not shown.running and shown.elapsed == 0)
+    row.space("stretch")
+    # Copy Link's work is in the browser, where the click may reach the clipboard (_CLOCK_JS, copyLink); its run does nothing.
+    row.button(_COPY_LABEL, key=_COPY_BUTTON)
+    row.button(_LEAVE_LABEL, on_click=_leave)
 
 
 def _live(sid: str, role: str) -> None:
