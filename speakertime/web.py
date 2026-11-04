@@ -63,6 +63,12 @@ Start, Stop and Reset (Terry, 2026-11-03, v1.15), so that a host can run the
 session without leaving a maximized window on a single monitor (``_PIP_HTML``,
 ``openWindow``).
 
+A link that connects by itself (Terry, 2026-11-03, v1.15)
+---------------------------------------------------------
+A page whose address says ``?session=ROOM5`` connects as Connect to Session
+does, at the visit's start (``session_asked``). Leave Session and Cancel take it
+out of the address, so that a reload does not go back.
+
 Fitted to the window on connecting (Terry, 2026-11-03)
 ------------------------------------------------------
 When a page enters a session (``_enter``: a new count in the clock's data),
@@ -309,6 +315,8 @@ _SILENT_OFF = {"0", "false", "no", "off"}
 """A value of the switch that says not silent after all (``?silent=no``)."""
 _SILENT_TEXT = "(silent)"
 """After the role on a page whose address says silent, so that its silence is not taken for a fault (Terry, 2026-11-03: this short)."""
+_SESSION_SWITCH = "session"
+"""The word in a page's address that connects it to a session by itself: ``?session=ROOM5`` (Terry, 2026-11-03)."""
 _START = "Start"
 _RESTART = "Restart"
 """The Start button's label once the timer has run (Elapsed not zero), running or stopped: Start goes on from there."""
@@ -1709,12 +1717,26 @@ def _mode() -> str | None:
     return st.session_state.get(_MODE)
 
 
+def _is_switch(name: str, switch: str) -> bool:
+    """Whether a name in a page's address is the switch ``switch``, whatever its case and however many dashes before it."""
+    return name.lstrip("-").casefold() == switch
+
+
 def silent_asked(params: Mapping[str, str]) -> bool:
     """Whether a page's address (its query parameters, ``params``) says it makes no sound: the switch by itself or with any value but a no."""
-    return any(
-        name.lstrip("-").casefold() == _SILENT_SWITCH and value.casefold() not in _SILENT_OFF
-        for name, value in params.items()
-    )
+    return any(_is_switch(name, _SILENT_SWITCH) and value.casefold() not in _SILENT_OFF for name, value in params.items())
+
+
+def session_asked(params: Mapping[str, str]) -> str | None:
+    """The session a page's address (its query parameters, ``params``) connects it to, as written; None for none, or a blank one."""
+    return next((value for name, value in params.items() if _is_switch(name, _SESSION_SWITCH) and value.strip()), None)
+
+
+def _forget_link() -> None:
+    """Take the session out of the page's address, the rest of it kept: the page has left it, so a reload is not to go back."""
+    for name in list(st.query_params):
+        if _is_switch(name, _SESSION_SWITCH):
+            del st.query_params[name]
 
 
 def _notify(kind: str, text: str) -> None:
@@ -1849,6 +1871,14 @@ def _start_visit() -> None:
     _tokens().update(heard.hosts)
     state[_BROWSER] = heard.browser
     state[_TAB] = heard.tabid
+    # A link naming a session connects as Connect to Session does: joining it, or waiting for it to be created, as
+    # host only if this browser holds its token and no other page hosts it. A reload of a tab already in that session
+    # goes on below, and says so.
+    link = session_asked(st.query_params)
+    if link is not None and ids.normalized(link) != heard.tab:
+        state[_BOX] = link[:ids.MAX_TYPED]  # as much as the box takes: a longer ID is refused, as it would be if typed
+        _connect()
+        return
     if heard.tab is not None:
         # A reload of a tab that was in a session: that session, and no other.
         checked = _join(heard.tab)
@@ -1934,6 +1964,7 @@ def _cancel() -> None:
     sid = st.session_state.get(_SID) or ""
     st.session_state[_BOX] = sid
     st.session_state[_SCREEN] = START
+    _forget_link()
     _cookie_change(None, drop=sid or None)
 
 
@@ -1944,6 +1975,7 @@ def _leave() -> None:
         st.session_state[_BOX] = sid
         _notify("info", f"You left session {sid}.")
     st.session_state[_SCREEN] = START
+    _forget_link()
     _cookie_change(None, drop=sid)
 
 
