@@ -1653,7 +1653,8 @@ def host_row_and_link(browser, errors: list[str], shot) -> None:
     ok("the button says so", button(host, "Copied").count() == 1 or "Copied" in main_text(host), main_text(host)[-200:])
     seen = settled(lambda: button(host, "Copy Link").count(), 1, 4.0)
     ok("and then reads Copy Link again", seen == 1, seen)
-    ok("the host still hosting, the timer untouched", "You are the host." in main_text(host) and clock(host)["elapsed"] == "0:00", clock(host))
+    seen = on_clock(host, _CLOCK_TEXTS)  # waits: a run of the page rebuilds the clock, missing for a moment
+    ok("the host still hosting, the timer untouched", "You are the host." in main_text(host) and seen["elapsed"] == "0:00", seen)
 
     # The clipboard's API refused: the older way.
     host.evaluate("navigator.clipboard.writeText('other')")
