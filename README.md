@@ -25,6 +25,16 @@ the window runs past its edge, with a scroll bar under it: make the window
 wider, or scroll. On a phone (a window under 640 pixels wide) the panel stays
 within the page and the figures shrink to fit it, as before.
 
+**Fitted to the window on connecting** (v1.13): when a page connects to a
+session, as host or viewer (a reload counts), it is scaled so that all of it
+is inside the browser tab's window, the text around the panel and the cookie
+note included, with no scroll bar. It is scaled down only, never up. The panel
+shrinks first, buttons and all, and the text around it keeps its size; in a
+window too short for that (the panel would have under a third of its height)
+the whole page's column shrinks as well. After that the scale stays as it is:
+moving a slider or resizing the window does not change it, and a reload fits
+the page again.
+
 A **pop-out** (and a pop-up) shows the host's panel scaled as a whole to fit
 its window (v1.11): make the window larger or smaller by hand and everything
 in it grows or shrinks together, as a larger or smaller copy of what the host
@@ -53,15 +63,21 @@ are other colours to choose instead.
 **Buzzer** (v1.10): on the host's panel only, beside Pop out. While the host
 holds it down (the mouse button, a finger, or Space or Enter on it), Time
 Remaining reads **BUZZ** in steady red on every panel and pop-out, the
-host's included, and a buzzer sounds on every viewer's page (not the
-host's). Let go, everything is as before. It stops by itself 15 seconds
-after the host's page last said it was held, so a page that loses its
+host's included, and a buzzer sounds on every page of the session, the
+host's too (v1.13). Let go, everything is as before. It stops by itself 15
+seconds after the host's page last said it was held, so a page that loses its
 connection with the button down cannot leave it sounding. A browser lets a
 page make a sound only once someone has clicked it, or pressed a key on it,
 since it loaded. A viewer who pressed Connect to Session has done that; a
 viewer's page that reconnected by itself after a reload has not, and says
 so under its clock: "Click anywhere on this page once so that it can sound
 the buzzer."
+
+To keep one page quiet, host or viewer, add `?silent` to its address:
+`https://speakertime.streamlit.app/?silent` (`?-silent` works too, and
+`?silent=no` means not silent). That page still shows BUZZ, makes no sound,
+and says "No buzzer sound on this page." beside its role. It is useful when
+two pages of a session are on one machine or in one room.
 
 **H:MM:SS or MMM.M**: the switch under the timers shows them as hours, minutes
 and seconds, or as minutes to a tenth ("12.5"). Every panel and every pop-out

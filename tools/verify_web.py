@@ -151,6 +151,7 @@ def main() -> int:
     check("No: the offer stays", ("Assume Host Role?" in texts(b), "You answered No" in texts(b)), (True, True))
     button(b, "Yes").click().run()
     check("Yes: the host", "You are the host." in texts(b), True)
+    check("a page counts each session entered, for its fit to its window: joined, then the host", b.session_state[web._ENTERED], 2)
     check("its limit box from the session", b.number_input(key=web._LIMIT_BOX).value, 2.3)
     check("its warning box from the session", b.number_input(key=web._WARN_BOX).value, 0.6)
 
@@ -202,7 +203,21 @@ def main() -> int:
     check("the file holds the sessions of this run too",
           sorted(json.loads(REMEMBERED.read_text(encoding="utf-8"))["sessions"])[:2], [sid, "LASTWEEK"])
 
-    for at_ in (a, b, b2, c, d, e, legacy, other, f, g, w, hst, t, r):
+    # The switch in a page's address that stops its buzzer sounding (v1.13, Terry, 2026-11-03).
+    for params, expected in (({}, False), ({"silent": ""}, True), ({"-silent": ""}, True), ({"--SILENT": "1"}, True), ({"silent": "yes"}, True),
+                             ({"silent": "no"}, False), ({"silent": "0"}, False), ({"silent": "False"}, False), ({"sound": ""}, False)):
+        check(f"silent_asked({params})", web.silent_asked(params), expected)
+    s = AppTest.from_file(str(ROOT / "streamlit_app.py"), default_timeout=30)
+    s.query_params["silent"] = "1"  # AppTest loses a blank value after its first run; Streamlit keeps one (verify_browser: ?silent)
+    s.session_state[web._HEARD] = sent(browser="browserS1")
+    s.run()
+    check("the start screen says nothing of it", web._SILENT_TEXT in texts(s), False)
+    s.text_input(key=web._BOX).input("quiet").run()
+    button(s, "Create New Session").click().run()
+    check("a page whose address says silent says so", ("You are the host." in texts(s), web._SILENT_TEXT in texts(s)), (True, True))
+    check("a page whose address does not, does not", web._SILENT_TEXT in texts(r), False)
+
+    for at_ in (a, b, b2, c, d, e, legacy, other, f, g, w, hst, t, r, s):
         check("no exception", [x.value for x in at_.exception], [])
 
     for failure in FAILURES:
