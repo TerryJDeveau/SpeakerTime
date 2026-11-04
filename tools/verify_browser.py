@@ -1465,9 +1465,8 @@ def day_and_night(browser, errors: list[str], shot) -> None:
     night, day = [black, white, white, white], [white, black, black, black]
     size = {"width": 800, "height": 1300}
 
-    def buttons(on: str) -> dict:
-        """Day black on white and Night white on black, whichever is on (Terry, 2026-11-04), the one on underlined."""
-        return {"day": [black, white, "underline" if on == "day" else "none"], "night": [white, black, "underline" if on == "night" else "none"]}
+    # Day black on white and Night white on black, whichever is on, with no mark on the one on (Terry, 2026-11-04).
+    buttons = {"day": [black, white, "none"], "night": [white, black, "none"]}
 
     def connected(context, sid: str, create: bool) -> Page:
         page = context.new_page()
@@ -1501,7 +1500,7 @@ def day_and_night(browser, errors: list[str], shot) -> None:
     ok("a viewer's panel has Day and Night, Night on under a black session", seen == {"shown": True, "labels": ["Day", "Night"], "on": "night"}, seen)
     ok("the host's panel has neither", on_clock(host, _DAYNIGHT_SEEN)["shown"] is False)
     seen = on_clock(viewer, _DAYNIGHT_BUTTONS_PANEL)
-    ok("Day black on white and Night white on black, Night underlined as the one on", seen == buttons("night"), seen)
+    ok("Day black on white and Night white on black, neither marked as the one on", seen == buttons, seen)
 
     # Never pressed: no effect at all, the viewer following the host either way. The one shown is not a press.
     on_clock(viewer, _DAYNIGHT_PRESS, "night")
@@ -1519,8 +1518,8 @@ def day_and_night(browser, errors: list[str], shot) -> None:
     on_clock(viewer, _DAYNIGHT_PRESS, "day")
     seen = painted(viewer)
     ok("Day pressed: at once the panel white, its text and timers black", seen == day, seen)
-    seen = settled(lambda: on_clock(viewer, _DAYNIGHT_BUTTONS_PANEL), buttons("day"), 2.0)
-    ok("the buttons in the same colours under Day, Day underlined now", seen == buttons("day"), seen)
+    seen = settled(lambda: on_clock(viewer, _DAYNIGHT_BUTTONS_PANEL), buttons, 2.0)
+    ok("the buttons in the same colours under Day, neither marked", seen == buttons, seen)
     ok("kept, and the host's own panel still black", kept(viewer) and painted(host) == night, painted(host))
     shot(viewer, "16-day.png")
 
@@ -1577,14 +1576,14 @@ def day_and_night(browser, errors: list[str], shot) -> None:
     seen = pip.evaluate(_DAYNIGHT_IN_WINDOW)
     ok("a viewer's pop-out opens at its Night", seen == {"painted": night, "on": "night"}, seen)
     seen = pip.evaluate(_DAYNIGHT_BUTTONS_WINDOW)
-    ok("its buttons Day black on white and Night white on black, Night underlined", seen == buttons("night"), seen)
+    ok("its buttons Day black on white and Night white on black, neither marked", seen == buttons, seen)
     line = pip.evaluate(_LINE_SEEN)
     ok("on one line with the full H:MM:SS|MMM.M, inside its window", (line["modes"], line["daynight"], line["oneRow"], line["inside"]) == (_FULL_MODES, True, True, True), line)
     pip.locator('.daynight button[data-d="day"]').click()
     seen = settled(lambda: pip.evaluate(_DAYNIGHT_IN_WINDOW), {"painted": day, "on": "day"}, 2.0)
     ok("Day pressed in the pop-out: its background white, its text and figures black", seen == {"painted": day, "on": "day"}, seen)
-    seen = settled(lambda: pip.evaluate(_DAYNIGHT_BUTTONS_WINDOW), buttons("day"), 2.0)
-    ok("its buttons in the same colours, Day underlined now", seen == buttons("day"), seen)
+    seen = settled(lambda: pip.evaluate(_DAYNIGHT_BUTTONS_WINDOW), buttons, 2.0)
+    ok("its buttons in the same colours, neither marked", seen == buttons, seen)
     seen = after(viewer, day)
     ok("and the panel with it", seen == day, seen)
     shot(pip, "17-popout-day.png")
