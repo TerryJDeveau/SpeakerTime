@@ -1817,6 +1817,11 @@ export default function (component) {{
 _PAGE_STYLE = """
 <style>
 [data-testid="stMainBlockContainer"] { padding-top: 3.2rem; padding-bottom: 3.2rem; }
+/* Streamlit's top bar is 3.75rem high and the title's own space above it (0.75rem) shrinks with the column, so a column
+   fitted small would put the title partly under the bar (seen live at 500 by 400): the padding makes up the difference. */
+[data-testid="stMainBlockContainer"]:has(> [data-testid="stVerticalBlock"] > .st-key-clock) {
+  padding-top: max(3.2rem, calc(3.75rem - 0.75rem * var(--speakertime-page, 1)));
+}
 /* The page is wide so that the clock can span the window (Terry, 2026-11-03: twice the largest figures); everything
    else keeps the centred column it had (44rem, 704 px), each element where it stood in it. */
 [data-testid="stMainBlockContainer"] > [data-testid="stVerticalBlock"] > :not(.st-key-clock) {
