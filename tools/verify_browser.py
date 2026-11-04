@@ -6,8 +6,9 @@ the timers agreeing on every screen, reloads, the host's window closed and
 "Assume Host Role?", a creator who comes back, Leave Session, the pop-out
 window, the pop-ups offered while another tab of the browser has it, a
 tab holding an earlier version's state, the host's Buzzer, the page fitted
-to its window on connecting, the host's line in a pop-out or pop-up, and a
-link that connects by itself.
+to its window on connecting, the host's line in a pop-out or pop-up, a
+link that connects by itself, a viewer's Day and Night, the host's row with Copy
+Link, and the frame's minimum in a small window.
 Prints each check and exits 1 on any failure.
 
 Needs Playwright (``pip install playwright``) and a Chromium: ``--chrome``
@@ -414,6 +415,9 @@ def run(url: str, launch: dict, shots: Path | None) -> None:
         fitted_to_the_window(browser, errors, shot)
         host_line_in_popout(browser, errors, shot)
         join_link(browser, errors)
+        day_and_night(browser, errors, shot)
+        host_row_and_link(browser, errors, shot)
+        frame_minimum_and_recovery(browser, errors)
 
         ok("no script errors on any page", not errors, errors)
         browser.close()
@@ -1172,7 +1176,7 @@ def fitted_to_the_window(browser, errors: list[str], shot) -> None:
     button(roomy, "Connect to Session").click()
     roomy.get_by_text("You are viewing it.").wait_for(timeout=8000)
     seen = fit_of(roomy)
-    ok("connecting again in a smaller window: fitted to it", all_shown(seen) and seen["panel"] < 1, seen)
+    ok("connecting again in a smaller window: fitted to it", all_shown(seen) and seen["page"] * seen["panel"] < 1, seen)
     host.close()
     button(small_viewer, "Yes").wait_for(timeout=(HOST_GRACE_S + 10) * 1000)
     button(small_viewer, "Yes").click()
@@ -1194,9 +1198,11 @@ _LINE_SEEN = """() => {
   const middles = boxes.map(b => (b.top + b.bottom) / 2), bar = q('.bar').getBoundingClientRect();
   return { modes: [...document.querySelectorAll('.modes button')].map(b => b.textContent), buzz: state('.buzz'),
            start: state('[data-a="start"]'), stop: state('[data-a="stop"]'), reset: state('[data-a="reset"]'),
+           daynight: !q('.daynight').hidden,
            held: q('.buzz').classList.contains('on'), oneRow: Math.max(...middles) - Math.min(...middles) <= 2,
            inside: bar.left >= -0.5 && bar.top >= -0.5 && bar.right <= innerWidth + 0.5 && bar.bottom <= innerHeight + 0.5 };
 }"""
+_FULL_MODES = ["H:MM:SS", "MMM.M"]
 
 
 def host_line_in_popout(browser, errors: list[str], shot) -> None:
@@ -1226,15 +1232,15 @@ def host_line_in_popout(browser, errors: list[str], shot) -> None:
     # One pop-out at a time, whatever the browser's contexts (web._POP_LOCK): the viewer's first, closed for the host's.
     viewer_pip = popped_from(viewer)
     seen = viewer_pip.evaluate(_LINE_SEEN)
-    ok("a viewer's pop-out: the switch alone", (seen["modes"], seen["buzz"], seen["start"], seen["stop"], seen["reset"])
-       == (["H:M:S", "Min"], None, None, None, None), seen)
+    ok("a viewer's pop-out: the switch and Day/Night, no host's buttons", (seen["modes"], seen["buzz"], seen["start"], seen["stop"], seen["reset"], seen["daynight"])
+       == (_FULL_MODES, None, None, None, None, True), seen)
     viewer_pip.close()
     viewer.wait_for_timeout(1500)
     pip = popped_from(host)
     seen = pip.evaluate(_LINE_SEEN)
-    ok("the host's pop-out: one line of H:M:S|Min, Buzz, Start, Stop and Reset, inside its window, Stop and Reset greyed",
-       (seen["modes"], seen["buzz"], seen["start"], seen["stop"], seen["reset"], seen["oneRow"], seen["inside"])
-       == (["H:M:S", "Min"], ["Buzz", False], ["Start", False], ["Stop", True], ["Reset", True], True, True), seen)
+    ok("the host's pop-out: one line of H:MM:SS|MMM.M, Buzz, Start, Stop and Reset, no Day/Night, inside its window, Stop and Reset greyed",
+       (seen["modes"], seen["buzz"], seen["start"], seen["stop"], seen["reset"], seen["daynight"], seen["oneRow"], seen["inside"])
+       == (_FULL_MODES, ["Buzz", False], ["Start", False], ["Stop", True], ["Reset", True], False, True, True), seen)
     shot(pip, "15-popout-line.png")
 
     def line(key: str) -> object:
@@ -1305,7 +1311,7 @@ def host_line_in_popout(browser, errors: list[str], shot) -> None:
     other.wait_for_timeout(1500)
     popup = popped_from(other)
     seen = popup.evaluate(_LINE_SEEN)
-    ok("a pop-up the same line", (seen["modes"], seen["buzz"], seen["start"], seen["oneRow"]) == (["H:M:S", "Min"], ["Buzz", False], ["Start", False], True), seen)
+    ok("a pop-up the same line", (seen["modes"], seen["buzz"], seen["start"], seen["oneRow"]) == (_FULL_MODES, ["Buzz", False], ["Start", False], True), seen)
     popup.locator('[data-a="start"]').click()
     ok("Start in the pop-up: running", settled(lambda: popup.evaluate(_LINE_SEEN)["start"], ["Restart", True], 3.0) == ["Restart", True], popup.evaluate(_LINE_SEEN))
     other.reload()
@@ -1397,6 +1403,329 @@ def join_link(browser, errors: list[str]) -> None:
     ok("Cancel: the session out of the address", "session=" not in cancelled.url, cancelled.url)
     cancelled.context.close()
     host.context.close()
+
+
+# A viewer's Day/Night on its panel: whether it is shown, its buttons, the one on; and a press of one.
+_DAYNIGHT_SEEN = f"""() => {{
+  const group = {_CLOCK_ROOT}.querySelector('.daynight');
+  return {{ shown: !group.hidden, labels: [...group.querySelectorAll('button')].map(b => b.textContent),
+           on: group.querySelector('button.on')?.dataset.d ?? null }};
+}}"""
+_DAYNIGHT_PRESS = f"(choice) => {_CLOCK_ROOT}.querySelector('.daynight button[data-d=\"' + choice + '\"]').click()"
+# The same in a pop-out or pop-up: its background, a label's text and the figures' colours, and the one on.
+_DAYNIGHT_IN_WINDOW = """() => {
+  const css = (sel, prop) => getComputedStyle(document.querySelector(sel))[prop];
+  return { painted: [css('body', 'backgroundColor'), css('[data-l="elapsed"]', 'color'), css('[data-v="elapsed"]', 'color'), css('[data-v="remaining"]', 'color')],
+           on: document.querySelector('.daynight button.on')?.dataset.d ?? null };
+}"""
+_DAYNIGHT_COOKIE = "speakertime_daynight="
+
+
+def day_and_night(browser, errors: list[str], shot) -> None:
+    """24. A viewer's Day/Night, on its panel and pop-out (Terry, 2026-11-04): no effect until pressed, kept for that session, the host's night-or-day change ignored."""
+    white, black, yellow, green = rgb("#ffffff"), rgb("#000000"), rgb(CLOCK_COLOURS["yellow"]), rgb(CLOCK_COLOURS["green"])
+    night, day = [black, white, white, white], [white, black, black, black]
+    size = {"width": 800, "height": 1300}
+
+    def connected(context, sid: str, create: bool) -> Page:
+        page = context.new_page()
+        page.on("pageerror", lambda error: errors.append(f"day and night: {error}"))
+        page.goto(profile_url)
+        page.locator('[data-testid="stApp"]').wait_for()
+        page.wait_for_timeout(1500)
+        id_box(page).fill(sid)
+        button(page, "Create New Session" if create else "Connect to Session").click()
+        page.get_by_text("You are the host." if create else "You are viewing it.").wait_for(timeout=8000)
+        page.wait_for_timeout(800)
+        return page
+
+    def painted(page: Page) -> list[str]:
+        seen = on_clock(page, _PAINT)
+        return [seen["panel"], seen["label"], seen["elapsed"], seen["remaining"]]
+
+    def after(page: Page, expected: list[str]) -> list[str]:
+        return settled(lambda: painted(page), expected, 4.0)
+
+    def choose(timer: str, colour: str) -> None:
+        on_clock(host, _SWATCH, [timer, colour])
+
+    def kept(page: Page) -> bool:
+        return _DAYNIGHT_COOKIE in page.evaluate("document.cookie")
+
+    host, viewer_context = connected(browser.new_context(viewport=size), "QUEBEC", True), browser.new_context(viewport=size)
+    viewer = connected(viewer_context, "QUEBEC", False)
+
+    seen = on_clock(viewer, _DAYNIGHT_SEEN)
+    ok("a viewer's panel has Day and Night, Night on under a black session", seen == {"shown": True, "labels": ["Day", "Night"], "on": "night"}, seen)
+    ok("the host's panel has neither", on_clock(host, _DAYNIGHT_SEEN)["shown"] is False)
+
+    # Never pressed: no effect at all, the viewer following the host either way. The one shown is not a press.
+    on_clock(viewer, _DAYNIGHT_PRESS, "night")
+    viewer.wait_for_timeout(300)
+    ok("pressing the one already shown does nothing: nothing kept", not kept(viewer), viewer.evaluate("document.cookie"))
+    choose("elapsed", "black")
+    seen = after(viewer, day)
+    ok("not pressed: the host's black makes the viewer's panel white, its text and timers black", seen == day, seen)
+    ok("and the toggle shows Day", on_clock(viewer, _DAYNIGHT_SEEN)["on"] == "day")
+    choose("elapsed", "white")
+    seen = after(viewer, night)
+    ok("not pressed: the host's white back to black", seen == night, seen)
+
+    # Pressed: shown at once, the host's page unchanged.
+    on_clock(viewer, _DAYNIGHT_PRESS, "day")
+    seen = painted(viewer)
+    ok("Day pressed: at once the panel white, its text and timers black", seen == day, seen)
+    ok("kept, and the host's own panel still black", kept(viewer) and painted(host) == night, painted(host))
+    shot(viewer, "16-day.png")
+
+    # The host's colours still come through.
+    choose("elapsed", "yellow")
+    seen = after(viewer, [white, black, yellow, black])
+    ok("the host's yellow comes through, on the viewer's white", seen == [white, black, yellow, black], seen)
+
+    # A change that would force the other of night and day is ignored: Elapsed stays yellow, Remaining black.
+    choose("remaining", "black")
+    settled(lambda: painted(host)[0], white, 4.0)
+    choose("elapsed", "white")
+    settled(lambda: painted(host), night, 4.0)
+    viewer.wait_for_timeout(2500)  # check-ins have brought it
+    seen = painted(viewer)
+    ok("the host's white, which would force night: ignored, Elapsed staying yellow, the panel white", seen == [white, black, yellow, black], [seen, painted(host)])
+
+    # Night pressed: its black flips to white, the colour staying; the host's white is no change of night or day.
+    on_clock(viewer, _DAYNIGHT_PRESS, "night")
+    seen = painted(viewer)
+    ok("Night pressed: the panel black, black text and figures white, the yellow kept", seen == [black, white, yellow, white], seen)
+    choose("elapsed", "green")
+    seen = after(viewer, [black, white, green, white])
+    ok("the host's green comes through", seen == [black, white, green, white], seen)
+    choose("elapsed", "white")
+    seen = after(viewer, night)
+    ok("the host's white on a viewer's night: taken", seen == night, seen)
+    choose("elapsed", "black")
+    settled(lambda: painted(host), day, 4.0)
+    viewer.wait_for_timeout(2500)
+    seen = painted(viewer)
+    ok("the host's black, which would force day: ignored, the panel still black", seen == night, [seen, painted(host)])
+
+    # Remembered through a reload, for this session and no other.
+    viewer.reload()
+    viewer.get_by_text("You are viewing it.").wait_for(timeout=8000)
+    seen = after(viewer, night)
+    ok("reloaded: still Night, the host's panel being white", seen == night and on_clock(viewer, _DAYNIGHT_SEEN)["on"] == "night" and painted(host) == day, seen)
+    other_host = connected(browser.new_context(viewport=size), "ROMEO", True)
+    other = connected(viewer_context, "ROMEO", False)
+    on_clock(other_host, _SWATCH, ["elapsed", "black"])
+    seen = after(other, day)
+    ok("the same browser in another session, the toggle not used there: the default, following its host", seen == day, seen)
+    other.close()
+    other_host.context.close()
+    viewer.wait_for_timeout(1500)
+
+    # One choice for a page and its pop-out.
+    with viewer.context.expect_page(timeout=5000) as popped:
+        on_clock(viewer, _CLICK_POP)
+    pip = popped.value
+    pip.on("pageerror", lambda error: errors.append(f"day and night, its window: {error}"))
+    viewer.wait_for_timeout(1000)
+    seen = pip.evaluate(_DAYNIGHT_IN_WINDOW)
+    ok("a viewer's pop-out opens at its Night", seen == {"painted": night, "on": "night"}, seen)
+    line = pip.evaluate(_LINE_SEEN)
+    ok("on one line with the full H:MM:SS|MMM.M, inside its window", (line["modes"], line["daynight"], line["oneRow"], line["inside"]) == (_FULL_MODES, True, True, True), line)
+    pip.locator('.daynight button[data-d="day"]').click()
+    seen = settled(lambda: pip.evaluate(_DAYNIGHT_IN_WINDOW), {"painted": day, "on": "day"}, 2.0)
+    ok("Day pressed in the pop-out: its background white, its text and figures black", seen == {"painted": day, "on": "day"}, seen)
+    seen = after(viewer, day)
+    ok("and the panel with it", seen == day, seen)
+    shot(pip, "17-popout-day.png")
+    pip.close()
+    viewer.wait_for_timeout(1000)
+
+    # Leave Session forgets it: back in the session, the viewer follows the host again.
+    button(viewer, "Leave Session").click()
+    button(viewer, "Connect to Session").wait_for()
+    viewer.wait_for_timeout(800)
+    ok("Leave Session forgets it", "QUEBEC" not in viewer.evaluate("decodeURIComponent(document.cookie)").split(_DAYNIGHT_COOKIE)[-1] or not kept(viewer), viewer.evaluate("decodeURIComponent(document.cookie)"))
+    button(viewer, "Connect to Session").click()
+    viewer.get_by_text("You are viewing it.").wait_for(timeout=8000)
+    choose("elapsed", "white")
+    seen = after(viewer, night)
+    ok("back in the session: the default again, following the host", seen == night, seen)
+
+    # A viewer made host goes by the session's look, and has no toggle.
+    on_clock(viewer, _DAYNIGHT_PRESS, "day")
+    ok("pressed once more", painted(viewer) == day, painted(viewer))
+    host.close()
+    button(viewer, "Yes").wait_for(timeout=(HOST_GRACE_S + 10) * 1000)
+    button(viewer, "Yes").click()
+    viewer.get_by_text("You are the host.").wait_for(timeout=5000)
+    seen = after(viewer, night)
+    ok("a viewer made host: the session's own look, no toggle", seen == night and on_clock(viewer, _DAYNIGHT_SEEN)["shown"] is False, seen)
+    viewer_context.close()
+
+
+def host_row_and_link(browser, errors: list[str], shot) -> None:
+    """25. Leave Session on the row of Start, Stop and Reset, at the group's right edge; Copy Link immediately left of it (Terry, 2026-11-04)."""
+    def opened(context, address: str = "") -> Page:
+        page = context.new_page()
+        page.on("pageerror", lambda error: errors.append(f"copy link: {error}"))
+        page.goto(profile_url + address)
+        return page
+
+    def created(context, sid: str, address: str = "") -> Page:
+        page = opened(context, address)
+        page.locator('[data-testid="stApp"]').wait_for()
+        page.wait_for_timeout(1500)
+        id_box(page).fill(sid)
+        button(page, "Create New Session").click()
+        page.get_by_text("You are the host.").wait_for(timeout=8000)
+        page.wait_for_timeout(800)
+        return page
+
+    def on_clipboard(page: Page) -> str:
+        return page.evaluate("navigator.clipboard.readText()")
+
+    context = browser.new_context(viewport={"width": 1100, "height": 1000}, permissions=["clipboard-read", "clipboard-write"])
+    host = created(context, "TANGO", "?silent")
+    ok("this host's page is silent", _SILENT_TEXT in main_text(host))
+    boxes = {name: button(host, name).bounding_box() for name in ("Start", "Stop", "Reset", "Copy Link", "Leave Session")}
+    middles = [box["y"] + box["height"] / 2 for box in boxes.values()]
+    ok("Start, Stop, Reset, Copy Link and Leave Session on one row", max(middles) - min(middles) <= 3, middles)
+    reset, copy, leave = boxes["Reset"], boxes["Copy Link"], boxes["Leave Session"]
+    ok("Copy Link immediately left of Leave Session, the two apart from Reset",
+       0 <= leave["x"] - (copy["x"] + copy["width"]) <= 16 and copy["x"] - (reset["x"] + reset["width"]) > 100, boxes)
+    edge = host.get_by_text(_COOKIE_TEXT).bounding_box()
+    ok("Leave Session right-aligned with the group's edge", abs(leave["x"] + leave["width"] - (edge["x"] + edge["width"])) <= 2, [leave, edge])
+    shot(host, "18-host-row.png")
+
+    # The link: of the form asked for, never with this page's ?silent.
+    base = profile_url.split("?")[0].rstrip("/")
+    host.bring_to_front()
+    button(host, "Copy Link").click()
+    seen = settled(lambda: on_clipboard(host), f"{base}/?session=TANGO", 3.0)
+    ok("Copy Link: the session's link on the clipboard, without ?silent", seen == f"{base}/?session=TANGO", seen)
+    ok("the button says so", button(host, "Copied").count() == 1 or "Copied" in main_text(host), main_text(host)[-200:])
+    seen = settled(lambda: button(host, "Copy Link").count(), 1, 4.0)
+    ok("and then reads Copy Link again", seen == 1, seen)
+    ok("the host still hosting, the timer untouched", "You are the host." in main_text(host) and clock(host)["elapsed"] == "0:00", clock(host))
+
+    # The clipboard's API refused: the older way.
+    host.evaluate("navigator.clipboard.writeText('other')")
+    host.evaluate("() => { navigator.clipboard.writeText = () => Promise.reject(new Error('refused')); }")
+    button(host, "Copy Link").click()
+    seen = settled(lambda: on_clipboard(host), f"{base}/?session=TANGO", 3.0)
+    ok("with the clipboard's API refused, the older way copies it", seen == f"{base}/?session=TANGO", seen)
+
+    # An ID with Markdown's and an address's characters: encoded, and the link goes there.
+    special = created(context, "A&B#1+@")
+    special.bring_to_front()
+    button(special, "Copy Link").click()
+    want = f"{base}/?session=A%26B%231%2B%40"
+    seen = settled(lambda: on_clipboard(special), want, 3.0)
+    ok("an ID with & # + @: encoded in the link", seen == want, seen)
+    other = browser.new_context(viewport={"width": 800, "height": 1000})
+    viewer = other.new_page()
+    viewer.on("pageerror", lambda error: errors.append(f"copy link, viewer: {error}"))
+    viewer.goto(want)
+    viewer.get_by_text("You are viewing it.").wait_for(timeout=10000)
+    ok("and that link connects to that session", "A&B#1+@" in main_text(viewer), main_text(viewer)[:120])
+    ok("a viewer has Leave Session and no Copy Link", button(viewer, "Leave Session").count() == 1 and button(viewer, "Copy Link").count() == 0)
+    other.close()
+    context.close()
+
+
+def frame_minimum_and_recovery(browser, errors: list[str]) -> None:
+    """26. The frame's minimum in a small window, twice what it was (Terry, 2026-11-04); the fit cannot run away, and has a last look (a page left at the floor, seen once live)."""
+    def connected(context, sid: str, create: bool) -> Page:
+        page = context.new_page()
+        page.on("pageerror", lambda error: errors.append(f"frame: {error}"))
+        page.goto(profile_url)
+        page.locator('[data-testid="stApp"]').wait_for()
+        page.wait_for_timeout(1500)
+        id_box(page).fill(sid)
+        button(page, "Create New Session" if create else "Connect to Session").click()
+        page.get_by_text("You are the host." if create else "You are viewing it.").wait_for(timeout=8000)
+        return page
+
+    def sized(width: int, height: int):
+        return browser.new_context(viewport={"width": width, "height": height})
+
+    def fit_of(page: Page) -> dict:
+        page.wait_for_function(f"() => {{ {_HAS_FIT}; }}", polling=100, timeout=20000)
+        return on_clock(page, _FIT_SEEN)
+
+    # The room is the window less the column's padding (2 x 3.2 rem) and a pixel; the panel keeps 2/3 of it, up to 250 px.
+    host = connected(sized(1545, 784), "UNIFORM", True)
+    usual = fit_of(host)
+    ok("a window of the usual size left as it was: the page's text at full size", usual["page"] == 1 and usual["size"][1] > 250, usual)
+    for width, height, want, was, who in ((500, 400, 198, 99, "a viewer's page"), (700, 500, 250, 132, "a viewer's page")):
+        page = connected(sized(width, height), "UNIFORM", False)
+        seen = fit_of(page)
+        ok(f"{who} in a window of {width} by {height}: the panel {want} px high (it was {was}), the page's column scaled, all inside",
+           abs(seen["size"][1] - want) <= 12 and seen["page"] < 1 and seen["inside"], seen)
+        if width == 500:
+            small = page
+        else:
+            page.context.close()
+    tiny = connected(sized(320, 200), "UNIFORM", False)
+    seen = fit_of(tiny)
+    ok("a window of almost no height: neither scale below 0.2", seen["page"] >= 0.2 and seen["panel"] >= 0.2, seen)
+    tiny.context.close()
+
+    # A fit forced to be past its time for rising (3 s), as a page arriving slowly may be.
+    force = "(ago) => { const at = performance.now(); window.speakerTime.fitting = { at: at - ago, changed: at, widest: 1 }; }"
+    column = '[data-testid="stMainBlockContainer"] > [data-testid="stVerticalBlock"]'
+    before = fit_of(small)
+    small.evaluate(f"""() => {{ const s = document.createElement('style'); s.id = 'nozoom'; s.textContent = '{column} {{ zoom: 1 !important; }}'; document.head.appendChild(s); }}""")
+    small.evaluate(force, 4000)
+    small.wait_for_timeout(800)
+    seen = on_clock(small, _FIT_SEEN)
+    small.evaluate("document.getElementById('nozoom').remove()")
+    # The page's full-size text wraps a little differently, so its scale may move a little; what it must not do is run away to 0.2.
+    ok("measured with the column's scale not in effect: no fall to the floor", abs(seen["page"] - before["page"]) <= 0.05, [before, seen])
+    fit_of(small)
+
+    before = fit_of(small)
+    small.evaluate(force, 4000)
+    small.evaluate(f"""() => {{ const d = document.createElement('div'); d.id = 'tall'; d.style.height = '4000px'; document.querySelector('{column}').appendChild(d); }}""")
+    small.wait_for_timeout(500)
+    fallen = on_clock(small, _FIT_SEEN)
+    small.evaluate("document.getElementById('tall').remove()")
+    seen = fit_of(small)
+    ok("something tall for a moment, late: the scales fall, and the last look raises them again",
+       fallen["page"] < before["page"] and abs(seen["page"] - before["page"]) <= 0.02 and abs(seen["panel"] - before["panel"]) <= 0.02, [before, fallen, seen])
+
+    # No window yet (Community Cloud's frame hidden): the fit's time does not run out.
+    small.evaluate(force, 9500)
+    small.evaluate("document.querySelector('[data-testid=\"stMain\"]').style.display = 'none'")
+    small.wait_for_timeout(1000)
+    waiting = small.evaluate("window.speakerTime.fitting !== null")
+    small.evaluate("document.querySelector('[data-testid=\"stMain\"]').style.display = ''")
+    seen = fit_of(small)
+    ok("the page hidden past the fit's limit: it still waits, and ends once there is a window", waiting and seen["ended"] and seen["inside"], [waiting, seen])
+    small.context.close()
+
+    # The way the floor was seen: a page waiting on a link, connecting when its session is created. Here with an empty
+    # cache, a slowed network and slowed scripts, the page that creates the session in front.
+    for attempt, sid in enumerate(("VICTOR", "WHISKEY"), 1):
+        context = sized(1024, 768)
+        waiting_page = context.new_page()
+        waiting_page.on("pageerror", lambda error: errors.append(f"frame, slowed: {error}"))
+        cdp = context.new_cdp_session(waiting_page)
+        cdp.send("Network.enable")
+        cdp.send("Network.emulateNetworkConditions", {"offline": False, "latency": 200, "downloadThroughput": 500 * 1024, "uploadThroughput": 500 * 1024})
+        cdp.send("Emulation.setCPUThrottlingRate", {"rate": 6})
+        waiting_page.goto(profile_url + f"?session={sid}")
+        waiting_page.get_by_text("Please wait, connection pending").wait_for(timeout=40000)
+        creator = connected(sized(1024, 768), sid, True)
+        creator.bring_to_front()
+        waiting_page.get_by_text("You are viewing it.").wait_for(timeout=20000)
+        seen = fit_of(waiting_page)
+        ok(f"connecting from the waiting screen, cold and slowed (try {attempt}): fitted as usual", seen["page"] == 1 and 0.5 < seen["panel"] < 0.75 and seen["inside"], seen)
+        creator.context.close()
+        context.close()
+    host.context.close()
+
 
 profile_url = ""
 """The page's address, for windows_of_one_browser, popups_of_one_browser and buzzer_held (set by run)."""
