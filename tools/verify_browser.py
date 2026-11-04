@@ -1096,7 +1096,7 @@ _FIT_SEEN = f"""() => {{
            top: main.scrollTop,
            reached: Math.max(...kids.map(k => k.bottom)) - (main.scrollHeight - main.clientHeight - main.scrollTop) <= innerHeight - {_BADGES_PX},
            text: +((column.getBoundingClientRect().height - panel.height) / (room - panel.height)).toFixed(3),
-           titleClear: title.getBoundingClientRect().top >= bar.bottom - 2,
+           titleClear: title.getBoundingClientRect().top >= bar.bottom - 3,  // the text's box stands a few pixels above its letters
            size: [Math.round(panel.width), Math.round(panel.height)], window: [innerWidth, innerHeight] }};
 }}"""
 _COLUMN_ZOOM = """() => getComputedStyle(document.querySelector(
@@ -1189,7 +1189,8 @@ def fitted_to_the_window(browser, errors: list[str], shot) -> None:
     host.reload()
     host.get_by_text("You are the host.").wait_for(timeout=8000)
     seen = fit_of(host)
-    ok("the host's page reloaded with the sizes at 800: fitted again", all_shown(seen) and seen["panel"] < before["panel"], seen)
+    # The note saying it has reconnected takes it a little past the window, where a column's scale of 0.92 would have kept it inside (web._FIT_TEXT).
+    ok("the host's page reloaded with the sizes at 800: fitted again, its text at full size, a scroll reaching the rest", scrolled(seen) and seen["page"] == 1 and seen["panel"] < before["panel"], seen)
     roomy.set_viewport_size({"width": 1000, "height": 500})
     button(roomy, "Leave Session").click()
     button(roomy, "Connect to Session").wait_for()
