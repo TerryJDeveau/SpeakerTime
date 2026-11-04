@@ -247,7 +247,21 @@ def main() -> int:
     l6 = linked({"session": "second"}, sent(tab=sid, browser="browserK6"))
     check("a link to another session than the tab's: the link's", l6.session_state[web._SID], "SECOND")
 
-    for at_ in (a, b, b2, c, d, e, legacy, other, f, g, w, hst, t, r, s, l1, l2, l3, l4, l5, l6):
+    # The host's row and the Warning Colour (Terry, 2026-11-04). AppTest has no layout, so verify_browser has where they stand.
+    h1 = page(sent(browser="browserL1"))
+    h1.text_input(key=web._BOX).set_value("row check").run()
+    button(h1, "Create New Session").click().run()
+    check("the host's buttons, in order: Copy Link and Leave Session after Reset",
+          [b_.label for b_ in h1.button], ["Start", "Stop", "Reset", "Copy Link", "Leave Session"])
+    label = next((m for m in h1.markdown if web._WARNING_COLOUR_LABEL in m.value), None)
+    check("the label reads Warning Colour, with its help", (label is not None, bool(label and label.proto.help)), (True, True))
+    check("the Time Left Warning's help leaves the buttons to it", "first button" in web._WARNING_HELP, False)
+    button(h1, "Copy Link").click().run()
+    check("Copy Link's run changes nothing on the server", ("You are the host." in texts(h1), h1.session_state[web._SID]), (True, "ROWCHECK"))
+    v1 = linked({"session": "rowcheck"}, sent(browser="browserL2"))
+    check("a viewer: Leave Session and no Copy Link", [b_.label for b_ in v1.button], ["Leave Session"])
+
+    for at_ in (a, b, b2, c, d, e, legacy, other, f, g, w, hst, t, r, s, l1, l2, l3, l4, l5, l6, h1, v1):
         check("no exception", [x.value for x in at_.exception], [])
 
     for failure in FAILURES:

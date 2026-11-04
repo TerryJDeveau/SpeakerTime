@@ -67,7 +67,19 @@ A link that connects by itself (Terry, 2026-11-03, v1.15)
 ---------------------------------------------------------
 A page whose address says ``?session=ROOM5`` connects as Connect to Session
 does, at the visit's start (``session_asked``). Leave Session and Cancel take it
-out of the address, so that a reload does not go back.
+out of the address, so that a reload does not go back. The host's Copy Link
+(Terry, 2026-11-04, v1.16) puts that address on the clipboard, from the page's
+script (``copyLink``), never with this page's ``?silent``.
+
+A viewer's Day and Night (Terry, 2026-11-04, v1.16)
+---------------------------------------------------
+A toggle on a viewer's panel and pop-out or pop-up. Until the viewer presses the
+one not shown it does nothing. Then the background is white or black whatever
+the host chooses, the text with it, a timer's figures too where they are black or
+white; the host's other colours still come through, and a change that would force
+the other of night and day is ignored. The browser's alone (``hub``'s
+``shownLook``), kept by session in a cookie: another session keeps the default,
+and Leave Session forgets it.
 
 Fitted to the window on connecting (Terry, 2026-11-03)
 ------------------------------------------------------
@@ -121,7 +133,7 @@ from streamlit.runtime import Runtime
 from streamlit.runtime.scriptrunner_utils.script_run_context import get_script_run_ctx
 
 from . import ids
-from .colours import AUTO, CLOCK_COLOURS, DARK, DEFAULT_COLOUR, LIGHT, warning_colour
+from .colours import AUTO, BLACK, CLOCK_COLOURS, DARK, DEFAULT_COLOUR, LIGHT, WHITE, warning_colour
 from .sessions import (
     BUZZ_HOLD_S, HOST, REGISTRY, SIZE_DEFAULT, SIZE_MAX, SIZE_MIN, SIZE_STEP, SIZED, VIEWER, Checked, Refused, Shown,
 )
@@ -149,6 +161,10 @@ _RECENT_KEPT = 10
 RECENT_COOKIE = "speakertime_recent"
 HOSTS_COOKIE = "speakertime_hosts"
 BROWSER_COOKIE = "speakertime_browser"
+DAYNIGHT_COOKIE = "speakertime_daynight"
+"""A viewer's Day or Night by session, read and written by the page's own script alone: the server has no part in it."""
+_DAYNIGHT_KEPT = 20
+"""The most sessions' Day or Night the browser keeps, the most recent."""
 LEGACY_LAST_COOKIE = "speakertime_last"
 """Until 2026-11-01 the one session remembered; read once as the recent list, then removed."""
 TAB_KEY = "speakertime_tab"
@@ -177,7 +193,9 @@ _BOX = "box"              # the Session ID box
 _LIMIT_BOX = "limit_box"  # the Time Limit box (minutes)
 _WARN_BOX = "warn_box"    # the Time Left Warning box (minutes)
 _PICKER = "warn_colours"  # the warning's colour buttons: their trigger, "pick"
+_PICKER_BOX = "warn_colours_box"  # their label and them
 _START_BUTTON = "start"   # the host's Start button, which reads Restart once the timer has run
+_COPY_BUTTON = "copy_link"  # the host's Copy Link button, found by the page's script by this key (Streamlit's class .st-key-copy_link)
 _TOKENS = "tokens"        # the host's token of each session this browser hosted: {sid: token}
 _BROWSER = "browser"      # this browser's id (None if its script could not say)
 _TAB = "tab"              # this tab's id (None if its script could not say)
@@ -264,10 +282,12 @@ _ROOM_TEXT = "00:00"
 # the document, so that a run of the page, which may rebuild the elements, leaves them; the column's rule (_PAGE_STYLE)
 # holds only while the clock is on the page, so that the start screen stays at full size. After that the sliders and
 # the window are the user's: a panel made wider than the window runs past its edge, with its scroll bar (v1.11).
-_FIT_SHARE = 1 / 3
-"""The panel alone shrinks until it would have less than this share of the window's height; below that, the whole column does too."""
-_FIT_LEAST = 0.1
-"""The smallest either scale goes: a window of almost no height shows the page unreadably small as it is, and browsers keep a smallest font."""
+_FIT_SHARE = 2 / 3
+"""In a small window the panel keeps this share of the window's height, the whole column shrinking to leave it that (v1.16, Terry, 2026-11-04: twice the 1/3 it had)."""
+_FIT_PANEL_PX = 250
+"""... up to this height as drawn, so that a window of the usual size is left as it was: the panel alone shrinks there, the text around it keeping its size."""
+_FIT_LEAST = 0.2
+"""The smallest either scale goes (v1.16: twice the 0.1 it had): a window of almost no height shows the page unreadably small as it is, and browsers keep a smallest font."""
 _FIT_GROW_MS = 3000
 """For this long after connecting the scales may rise again as well as fall: elements on their way out may have been measured."""
 _FIT_SETTLED_MS = 1500
@@ -320,6 +340,12 @@ _SESSION_SWITCH = "session"
 _START = "Start"
 _RESTART = "Restart"
 """The Start button's label once the timer has run (Elapsed not zero), running or stopped: Start goes on from there."""
+_LEAVE_LABEL = "Leave Session"
+_COPY_LABEL = "Copy Link"
+_COPIED_LABEL = "Copied"
+_NOT_COPIED_LABEL = "Could not copy"
+_COPY_SHOWN_MS = 1500
+"""What the Copy Link button says after a press, for this long."""
 _POP_BUZZ = "Buzz"
 """The Buzzer's label on the host's line in a pop-out or pop-up (Terry, 2026-11-03)."""
 _POP_CONTROLS = {"start": _START, "stop": "Stop", "reset": "Reset"}
@@ -350,17 +376,17 @@ _LABELS = {
 }
 """The labels in each way of showing the times; "overtime" is Remaining's while it is negative."""
 
-_POP_MODE_NAMES = {CLOCK: "H:M:S", MINUTES: "Min"}
-"""The switch's two buttons in a pop-out or pop-up, shorter, so that the host's whole line fits on one row (Terry, 2026-11-03)."""
+_MODES_HTML = '<div class="modes" role="group" aria-label="Show the times as">' + "".join(
+    f'<button type="button" data-m="{mode}">{name}</button>' for mode, name in _MODE_NAMES.items()
+) + "</div>"
+"""The switch, the same on a panel, a pop-out and a pop-up (Terry, 2026-11-04: of v1.15's shorter H:M:S and Min in the last two, "didn't improve anything")."""
 
-
-def _modes_html(names: dict[str, str]) -> str:
-    return '<div class="modes" role="group" aria-label="Show the times as">' + "".join(
-        f'<button type="button" data-m="{mode}">{name}</button>' for mode, name in names.items()
-    ) + "</div>"
-
-
-_MODES_HTML = _modes_html(_MODE_NAMES)
+_DAY, _NIGHT = "day", "night"
+_DAYNIGHT_THEMES = {_DAY: LIGHT, _NIGHT: DARK}
+_DAYNIGHT_HTML = '<div class="daynight" role="group" aria-label="Show the panel by day or by night" hidden>' + "".join(
+    f'<button type="button" data-d="{choice}">{choice.capitalize()}</button>' for choice in _DAYNIGHT_THEMES
+) + "</div>"
+"""A viewer's Day/Night toggle (Terry, 2026-11-04), on its panel and pop-out or pop-up; a page's script keeps the choice (``hub``, shownLook)."""
 
 
 def _cell(name: str, extra: str = "") -> str:
@@ -416,7 +442,8 @@ _SHARED_CSS = f"""
 .pair .cell {{ flex: 0 1 auto; min-width: 0; }}
 .pair .label {{ text-align: center; }}
 .pair .cell[hidden] {{ display: none; }}
-.modes button.on {{ background: var(--text); color: var(--panel); }}
+.modes button.on, .daynight button.on {{ background: var(--text); color: var(--panel); }}
+.daynight[hidden] {{ display: none; }}
 """
 
 _GONE_TEXT = "Its SpeakerTime tab has gone: close this window."
@@ -428,7 +455,7 @@ _GONE_TEXT = "Its SpeakerTime tab has gone: close this window."
 # maximized Zoom window on a single monitor (Terry, 2026-11-03).
 _PIP_HTML = (
     '<div class="stage">' + _row("elapsed", False) + _row("remaining", False) + _row("limit", False)
-    + f'<div class="bar">{_modes_html(_POP_MODE_NAMES)}<button class="buzz" type="button" data-host hidden>{_POP_BUZZ}</button>'
+    + f'<div class="bar">{_MODES_HTML}{_DAYNIGHT_HTML}<button class="buzz" type="button" data-host hidden>{_POP_BUZZ}</button>'
     + "".join(f'<button type="button" data-a="{action}" data-host hidden>{label}</button>' for action, label in _POP_CONTROLS.items())
     + "</div></div>"
     + f'<div class="gone-note">{_GONE_TEXT}</div>'
@@ -451,8 +478,8 @@ _PIP_CSS = f"""
   {_SHARED_CSS}
   .pair .cell + .cell {{ margin-left: 44px; }}
   .bar {{ display: flex; align-items: center; gap: 8px; width: max-content; margin: 4px auto 0; white-space: nowrap; }}
-  .modes {{ display: flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }}
-  .modes button {{ font: inherit; font-size: 14px; color: var(--text); background: transparent; border: 0;
+  .modes, .daynight {{ display: flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }}
+  .modes button, .daynight button {{ font: inherit; font-size: 14px; color: var(--text); background: transparent; border: 0;
     padding: 4px 10px; cursor: pointer; }}
   .bar > button {{ font: inherit; font-size: 14px; color: var(--text); background: transparent;
     border: 1px solid var(--line); border-radius: 8px; padding: 4px 12px; cursor: pointer; }}
@@ -561,6 +588,14 @@ const LABELS = {json.dumps(_LABELS)};
 const THEMES = {json.dumps(_THEMES)};
 const DARK = {json.dumps(DARK)};
 const LIGHT = {json.dumps(LIGHT)};
+const COLOURS = {json.dumps(CLOCK_COLOURS)};
+const WHITE = {json.dumps(WHITE)};
+const BLACK = {json.dumps(BLACK)};
+const DAY = {json.dumps(_DAY)};
+const NIGHT = {json.dumps(_NIGHT)};
+const DAYNIGHT_COOKIE = {json.dumps(DAYNIGHT_COOKIE)};
+const DAYNIGHT_KEPT = {_DAYNIGHT_KEPT};
+const COOKIE_SECONDS = {_COOKIE_DAYS * 86400};
 const PIP_HTML = {json.dumps(_PIP_HTML)};
 const PIP_CSS = {json.dumps(_PIP_CSS)};
 const PIP_FILL = {_PIP_FILL};
@@ -618,7 +653,7 @@ const hub = () => (window.speakerTime ??= {{
   host: null,       // whether this page hosts the session (the clock's data); null until the clock has said
   silent: false,    // this page's address says it makes no sound (the clock's data, silent_asked)
   entered: null,    // the clock's data's count of sessions entered, as last seen
-  fitting: null,    // while the page is being fitted to its window: {{ at, changed, widest }} (_CLOCK_JS, fit)
+  fitting: null,    // while the page is being fitted to its window: fitStart's (_CLOCK_JS, fit)
   fitPage: 1,       // the page's column's scale
   fitPanel: 1,      // the panel's own scale, within that
   listening: false, // the page's own listeners for the Buzzer are added (_CLOCK_JS, listen)
@@ -631,6 +666,7 @@ const hub = () => (window.speakerTime ??= {{
   buzzSend: null,   // sends it (the latest sync element's trigger)
   audio: null,      // the page's AudioContext, once it may sound (wake)
   tone: null,       // the buzzer while it sounds: {{ gain, oscillators }}
+  dayNight: null,   // a viewer's Day/Night for the session: {{ sid, choice, shown, seen }} (dayNightOf)
 
   // A check-in's reading (or the clock's own, as it is laid out). A Buzzer
   // that stopped by itself changes no version, so its state is taken from
@@ -687,9 +723,73 @@ const hub = () => (window.speakerTime ??= {{
              warning: b.warning === null ? null : clock(b.warning), buzz }};
   }},
 
-  // The session's look on a panel (the .clock element) or the pop-out (its body): the theme's colours and the timers'.
-  paint(box) {{
+  // The viewers' Day or Night by session, from their cookie (the latest last; web._DAYNIGHT_KEPT at most).
+  dayNightKept() {{
+    try {{
+      const pair = document.cookie.split("; ").find((one) => one.startsWith(DAYNIGHT_COOKIE + "="));
+      const kept = pair === undefined ? null : JSON.parse(decodeURIComponent(pair.slice(DAYNIGHT_COOKIE.length + 1)));
+      return typeof kept === "object" && kept !== null && !Array.isArray(kept) ? kept : {{}};
+    }} catch (error) {{
+      return {{}};
+    }}
+  }},
+
+  // A viewer's Day/Night for session ``sid``. ``choice``: null until pressed for this session, and the session's look is
+  // shown as it is. ``shown``: each timer's colour (a name) as shown under the choice; ``seen``: the host's, as last seen.
+  dayNightOf(sid) {{
+    if (this.dayNight === null || this.dayNight.sid !== sid) {{
+      const choice = this.dayNightKept()[sid];
+      this.dayNight = {{ sid, choice: choice === DAY || choice === NIGHT ? choice : null, shown: {{}}, seen: {{}} }};
+    }}
+    return this.dayNight;
+  }},
+
+  // The look this page shows (Terry, 2026-11-04). The session's, unless a viewer has pressed Day or Night for it: then
+  // the background is white or black whatever the host has chosen, and the text with it, a timer's figures too where
+  // they are black or white. The host's other colours still come through; a change to the black or white that would
+  // force the other of night and day is ignored, the timer staying as it was.
+  shownLook() {{
     const look = this.base.look;
+    if (look === null || this.host !== false) return look;
+    const d = this.dayNightOf(this.base.sid);
+    if (d.choice === null) return look;
+    const theme = d.choice === DAY ? LIGHT : DARK;
+    const own = theme === LIGHT ? BLACK : WHITE, other = theme === LIGHT ? WHITE : BLACK;
+    const names = {{}};
+    for (const timer of ["elapsed", "remaining"]) {{
+      const name = look.names[timer];
+      if (d.seen[timer] !== name) {{
+        const first = d.seen[timer] === undefined;
+        d.seen[timer] = name;
+        if (first || name !== other) d.shown[timer] = name;
+      }}
+      if (d.shown[timer] === other) d.shown[timer] = own;
+      names[timer] = d.shown[timer];
+    }}
+    return {{ ...look, theme, names, elapsed: COLOURS[names.elapsed], remaining: COLOURS[names.remaining] }};
+  }},
+
+  // A viewer pressing Day or Night, on its panel or pop-out. The one already shown does nothing, so the session's look
+  // goes on deciding until the other is pressed. Kept for this session alone (Leave Session forgets it, _WRITER_JS).
+  setDayNight(choice) {{
+    if (this.base === null || this.host !== false) return;
+    if (this.shownLook()?.theme === (choice === DAY ? LIGHT : DARK)) return;
+    const sid = this.base.sid;
+    this.dayNightOf(sid).choice = choice;
+    try {{
+      const kept = this.dayNightKept();
+      delete kept[sid];  // and added again, as the most recent
+      kept[sid] = choice;
+      const sids = Object.keys(kept);
+      while (sids.length > DAYNIGHT_KEPT) delete kept[sids.shift()];
+      document.cookie = DAYNIGHT_COOKIE + "=" + encodeURIComponent(JSON.stringify(kept)) + "; max-age=" + COOKIE_SECONDS
+        + "; path=/; SameSite=Lax" + (location.protocol === "https:" ? "; Secure" : "");
+    }} catch (error) {{}}  // no cookies for this page: the choice lasts this visit
+  }},
+
+  // The look on a panel (the .clock element) or the pop-out (its body): the theme's colours and the timers'.
+  paint(box) {{
+    const look = this.shownLook();
     if (look === null) return;
     const key = JSON.stringify(look);
     if (box.dataset.look === key) return;
@@ -745,6 +845,12 @@ const hub = () => (window.speakerTime ??= {{
       }}
     }}
     for (const button of root.querySelectorAll(".modes button")) button.classList.toggle("on", button.dataset.m === mode);
+    const group = root.querySelector(".daynight");
+    if (group !== null) {{
+      if (group.hidden === (this.host === false)) group.hidden = this.host !== false;
+      const on = this.shownLook()?.theme === LIGHT ? DAY : NIGHT;
+      for (const button of group.querySelectorAll("button")) button.classList.toggle("on", button.dataset.d === on);
+    }}
     this.buzzer(t.buzz);
   }},
 
@@ -889,6 +995,12 @@ const hub = () => (window.speakerTime ??= {{
         h.fitPip(win, doc);
       }});
     }}
+    for (const button of doc.querySelectorAll(".daynight button")) {{
+      button.addEventListener("click", () => {{
+        h.setDayNight(button.dataset.d);
+        h.draw(doc, h.pipMode);
+      }});
+    }}
     const tick = () => {{
       win.speakerTimeBeat = Date.now();
       doc.body.classList.remove("gone");
@@ -927,7 +1039,7 @@ const hub = () => (window.speakerTime ??= {{
 _CLOCK_HTML = (
     '<div class="scroll"><div class="clock">'
     + "".join(_row(name, name in SIZED) for name in ("elapsed", "remaining", "limit"))
-    + f'<div class="tools">{_MODES_HTML}<button class="pop" type="button" hidden></button>'
+    + f'<div class="tools">{_MODES_HTML}{_DAYNIGHT_HTML}<button class="pop" type="button" hidden></button>'
     + f'<button class="buzzer" type="button" hidden>{_BUZZER_LABEL}</button></div>'
     + '<div class="why" hidden></div>'
     + '<div class="note" hidden></div>'
@@ -980,8 +1092,8 @@ _CLOCK_CSS = f"""
 {_SHARED_CSS}
 .tools {{ display: flex; justify-content: center; align-items: center; flex-wrap: wrap; gap: 8px 12px; margin-top: 4px;
   contain: inline-size; }}
-.modes {{ display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }}
-.modes button {{ font: inherit; font-size: 14px; color: var(--text); background: transparent; border: 0;
+.modes, .daynight {{ display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }}
+.modes button, .daynight button {{ font: inherit; font-size: 14px; color: var(--text); background: transparent; border: 0;
   padding: 4px 10px; cursor: pointer; }}
 .pop, .buzzer {{
   font: inherit; font-size: 14px; color: var(--text); background: transparent;
@@ -1061,7 +1173,14 @@ const POPUP_FEATURES = {json.dumps(_POPUP_FEATURES)};
 const PIP_SIZE = {{ width: 340, height: 280 }};
 const BUZZ_RESEND_MS = {_BUZZ_RESEND_MS};
 const BUZZ_CHECK_MS = {_BUZZ_CHECK_MS};
+const SESSION_SWITCH = {json.dumps(_SESSION_SWITCH)};
+const COPY_BUTTON = {json.dumps(f".st-key-{_COPY_BUTTON} button")};
+const COPY_LABEL = {json.dumps(_COPY_LABEL)};
+const COPIED_LABEL = {json.dumps(_COPIED_LABEL)};
+const NOT_COPIED_LABEL = {json.dumps(_NOT_COPIED_LABEL)};
+const COPY_SHOWN_MS = {_COPY_SHOWN_MS};
 const FIT_SHARE = {_FIT_SHARE};
+const FIT_PANEL_PX = {_FIT_PANEL_PX};
 const FIT_LEAST = {_FIT_LEAST};
 const FIT_GROW_MS = {_FIT_GROW_MS};
 const FIT_SETTLED_MS = {_FIT_SETTLED_MS};
@@ -1113,21 +1232,34 @@ const fitted = (h, root) => {{
   const room = main.clientHeight - parseFloat(padding.paddingTop) - parseFloat(padding.paddingBottom) - 1;
   const drawn = root.getBoundingClientRect().height;
   if (room <= 0 || drawn <= 0) return null;
-  const panel = drawn / (h.fitPage * h.fitPanel);
-  const others = (column.getBoundingClientRect().height - drawn) / h.fitPage;
+  // The scales in effect, not those asked for: while the column's rule does not hold yet (_PAGE_STYLE), or its elements
+  // are still arriving, dividing by the scale asked for makes the rest of the page look larger the smaller the scale,
+  // and the page falls to FIT_LEAST in a few draws.
+  const zoomed = (element) => parseFloat(getComputedStyle(element).zoom) || 1;
+  const pageNow = zoomed(column), panelNow = zoomed(root);
+  const panel = drawn / (pageNow * panelNow);
+  const others = (column.getBoundingClientRect().height - drawn) / pageNow;
   const scroll = root.parentElement;
   if (scroll.scrollWidth > scroll.clientWidth) {{
-    h.fitting.widest = Math.min(h.fitting.widest, h.fitPage * h.fitPanel * scroll.clientWidth / scroll.scrollWidth);
+    h.fitting.widest = Math.min(h.fitting.widest, pageNow * panelNow * scroll.clientWidth / scroll.scrollWidth);
   }}
-  let page = 1;
-  let scale = (room - others) / panel;
-  if (scale < 1 && scale * panel < FIT_SHARE * room) {{
-    page = Math.max(FIT_LEAST, Math.min(1, (1 - FIT_SHARE) * room / others));
-    scale = FIT_SHARE * room / (page * panel);
+  const most = h.fitting.most;  // the highest the column's scale may go (fit)
+  let page = most;
+  let scale = (room - others * page) / (page * panel);
+  const least = Math.min(FIT_SHARE * room, FIT_PANEL_PX, panel);  // the panel's height as drawn, in a small window
+  if (scale * page < 1 && scale * page * panel < least) {{
+    page = Math.max(FIT_LEAST, Math.min(most, (room - least) / others));
+    scale = least / (page * panel);
   }}
   const down = (value) => Math.floor(value * 1000) / 1000;
-  return {{ page: down(page), panel: down(Math.max(FIT_LEAST, Math.min(1, scale, h.fitting.widest / page))) }};
+  // The column's scale reaches the panel inside it, so the panel's own may pass 1 where the column's is below it: what
+  // limits the panel is its size as drawn, never above its full size (widest starts at 1) or wider than its place.
+  return {{ page: down(page), panel: down(Math.max(FIT_LEAST, Math.min(scale, h.fitting.widest / page))) }};
 }};
+
+// A fit's state, begun now: when it began and last changed; how wide the panel may be; the most the column's scale may
+// go, and whether it has risen yet.
+const fitStart = (now) => ({{ at: now, changed: now, widest: 1, most: 1, rose: false }});
 
 // Fits the page to its window after it connects to a session, as its elements
 // arrive: run at every draw until the scales settle, and not again until the
@@ -1145,17 +1277,31 @@ const fit = (h, root) => {{
   }}
   if (document.querySelector('[data-testid="stApp"]')?.getAttribute("data-test-script-state") === "running") return;
   const want = fitted(h, root);
-  if (want === null) return;
-  const smaller = want.page < h.fitPage - 0.001 || want.panel < h.fitPanel - 0.001;
-  const larger = now - f.at < FIT_GROW_MS && (want.page > h.fitPage + 0.01 || want.panel > h.fitPanel + 0.01);
-  if (smaller || larger) {{
+  if (want === null) {{
+    // No window yet (Community Cloud keeps the app's frame hidden, at no size, while the page loads): the fit's time
+    // starts when there is one.
+    f.at = f.changed = now;
+    return;
+  }}
+  // The column's scale changes how its text wraps, so a scale's measure says little about a higher one: at phone widths the
+  // host's page measured at 0.565 as if 1 would fit, and at 1 as needing 0.565, flipping at every draw until the fit's
+  // time ran out, wherever that left it (2026-11-04, 66 to 304 px past the window). So a rise that did not fit sets the
+  // most the column's scale may go; at that scale the panel takes the room there is. After FIT_GROW_MS it only falls.
+  const falling = want.page < h.fitPage - 0.001, rising = want.page > h.fitPage + 0.01;
+  if (falling && f.rose) f.most = want.page;
+  const late = now - f.at >= FIT_GROW_MS;
+  if (late) f.most = Math.min(f.most, falling ? want.page : h.fitPage);
+  if (falling || want.panel < h.fitPanel - 0.001 || (!late && (rising || want.panel > h.fitPanel + 0.01))) {{
+    if (rising) f.rose = true;
     h.fitPage = want.page;
     h.fitPanel = want.panel;
     document.documentElement.style.setProperty("--speakertime-page", String(want.page));
     document.documentElement.style.setProperty("--speakertime-panel", String(want.panel));
     f.changed = now;
   }} else if (now - f.changed > FIT_SETTLED_MS) {{
-    h.fitting = null;
+    // Settled at the floor: fitted once more, what was measured while the page arrived not having been the page.
+    // Seen once, 2026-11-04: a page left at the floor that a reload fitted at 1 and 0.609.
+    h.fitting = !f.looked && h.fitPage <= FIT_LEAST + 0.001 ? {{ ...fitStart(now), looked: true }} : null;
   }}
 }};
 
@@ -1181,6 +1327,42 @@ const drawPanel = (h) => {{
   const deaf = root.querySelector(".buzz-note");
   const hidden = h.host !== false || h.silent || h.mayPlay();
   if (deaf.hidden !== hidden) deaf.hidden = hidden;
+}};
+
+// Copy Link (Terry, 2026-11-04): the address that connects to this session by
+// itself (session_asked), with none of this page's own switches, so never
+// ?silent. The page's address without its query, the top window's: on Community
+// Cloud the app runs in a frame of the same origin. The clipboard's API where
+// the browser allows it, else the older way, both within the click's activation.
+const copyLink = async (h, button) => {{
+  if (h.base === null) return;
+  let place = location;
+  try {{ place = window.top.location; }} catch (error) {{}}
+  const link = place.origin + place.pathname + "?" + SESSION_SWITCH + "=" + encodeURIComponent(h.base.sid);
+  let copied = false;
+  try {{
+    await navigator.clipboard.writeText(link);
+    copied = true;
+  }} catch (error) {{
+    const box = document.createElement("textarea");
+    box.value = link;
+    box.style.position = "fixed";
+    box.style.opacity = "0";
+    document.body.appendChild(box);
+    box.select();
+    try {{ copied = document.execCommand("copy"); }} catch (older) {{}}
+    box.remove();
+  }}
+  // Said on the button, its width kept: only the text node changes, which Streamlit's next run leaves alone or lays out afresh.
+  const text = button.querySelector("p")?.firstChild;
+  if (!text) return;
+  clearTimeout(h.copyTimer);
+  button.style.minWidth = button.offsetWidth + "px";
+  text.nodeValue = copied ? COPIED_LABEL : NOT_COPIED_LABEL;
+  h.copyTimer = setTimeout(() => {{
+    text.nodeValue = COPY_LABEL;
+    button.style.minWidth = "";
+  }}, COPY_SHOWN_MS);
 }};
 
 // The host's Buzzer to the server, as this page holds it now, through the
@@ -1350,8 +1532,8 @@ export default function (component) {{
   h.silent = data.silent === true;
   if (h.entered !== data.entered) {{
     h.entered = data.entered;
-    const at = performance.now();
-    h.fitting = {{ at, changed: at, widest: 1 }};
+    h.fitting = fitStart(performance.now());
+    h.dayNight = null;  // read again: Leave Session may have forgotten it
   }}
   root.classList.toggle("host", data.host);
   root.querySelector(".buzzer").hidden = !data.host;
@@ -1365,6 +1547,11 @@ export default function (component) {{
     h.listening = true;
     h.keepBuzz = () => keepBuzz(h);
     listen(h, window);
+    // On the document, once: Streamlit lays the button out afresh on its runs. Before Streamlit's own handler, whose run may rebuild it.
+    document.addEventListener("click", (event) => {{
+      const button = event.target.closest?.(COPY_BUTTON);
+      if (button) copyLink(h, button);
+    }}, true);
   }}
   if (data.host) {{
     for (const slider of root.querySelectorAll("input.size")) {{
@@ -1424,6 +1611,14 @@ function wire(h, root) {{
       h.pageMode = button.dataset.m;
       drawPanel(h);
       h.send("mode", button.dataset.m);
+    }});
+  }}
+
+  // A viewer's Day/Night: the browser's alone, so shown at once, with no run of the page.
+  for (const button of root.querySelectorAll(".daynight button")) {{
+    button.addEventListener("click", () => {{
+      h.setDayNight(button.dataset.d);
+      drawPanel(h);
     }});
   }}
 
@@ -1546,6 +1741,7 @@ _WRITER_JS = f"""
 const RECENT = {json.dumps(RECENT_COOKIE)};
 const HOSTS = {json.dumps(HOSTS_COOKIE)};
 const LEGACY = {json.dumps(LEGACY_LAST_COOKIE)};
+const DAYNIGHT = {json.dumps(DAYNIGHT_COOKIE)};
 const TAB = {json.dumps(TAB_KEY)};
 const RECENT_KEPT = {_RECENT_KEPT};
 const HOSTS_KEPT = {_HOSTS_KEPT};
@@ -1584,6 +1780,11 @@ export default function (component) {{
     recent = recent.slice(0, RECENT_KEPT);
     write(RECENT, recent.length ? encodeURIComponent(JSON.stringify(recent)) : null);
     if (read(LEGACY) !== null) write(LEGACY, null);
+    const dayNight = readJson(DAYNIGHT);
+    if (data.drop !== null && dayNight !== null && typeof dayNight === "object" && data.drop in dayNight) {{
+      delete dayNight[data.drop];  // the session forgotten: its Day or Night too
+      write(DAYNIGHT, Object.keys(dayNight).length ? encodeURIComponent(JSON.stringify(dayNight)) : null);
+    }}
     if (data.host !== null) {{
       let hosts = readJson(HOSTS);
       if (typeof hosts !== "object" || hosts === null || Array.isArray(hosts)) hosts = {{}};
@@ -1635,19 +1836,17 @@ _LIMIT_HELP = (
 )
 _WARNING_HELP = (
     "Minutes, to one decimal place, or blank for none. Shown beside the Time Limit on every panel and pop-out. "
-    "While Time Remaining is this many minutes or fewer, and more than zero, it takes the warning's colour. "
-    "The buttons on the right set that colour: the first, A, is green (or, when Time Remaining is in a colour, "
-    "the colour opposite it); the others are four more."
+    "While Time Remaining is this many minutes or fewer, and more than zero, it takes the warning's colour."
+)
+_WARNING_COLOUR_LABEL = "Warning Colour"
+_WARNING_COLOUR_HELP = (
+    "The colour Time Remaining takes while it is within the Time Left Warning, on every panel and pop-out. "
+    "The first button, A, is green (or, when Time Remaining is in a colour, the colour opposite it); the others are four more."
 )
 
 # The warning's colour buttons (``Shown.warning_buttons``), beside its box on the host's page: laid out again at each run.
-_PICKER_HTML = (
-    '<div class="picks-box"><div class="picks-label">Warning colour</div>'
-    '<div class="picks" role="group" aria-label="Colour of the Time Left Warning"></div></div>'
-)
+_PICKER_HTML = '<div class="picks" role="group" aria-label="Colour of the Time Left Warning"></div>'
 _PICKER_CSS = """
-.picks-box { font-family: "Source Sans Pro", "Source Sans 3", system-ui, sans-serif; }
-.picks-label { font-size: 14px; line-height: 1.6; margin-bottom: 0.5rem; }
 .picks { display: flex; align-items: center; gap: 7px; height: 2.5rem; }
 .picks button { width: 22px; height: 22px; padding: 0; border-radius: 50%; cursor: pointer; background: var(--swatch);
   border: 1px solid #9ca3af; font: 600 11px system-ui, sans-serif; color: #000; }
@@ -1675,7 +1874,8 @@ export default function (component) {
 
 _COOKIE_NOTE = (
     "This page keeps small cookies in your browser: the sessions you were in, the host key of a session you hosted, "
-    "and a random id for this browser, so that a reload or a return reconnects you. Leave Session forgets the session."
+    "your Day or Night for a session, and a random id for this browser, so that a reload or a return reconnects you. "
+    "Leave Session forgets the session."
 )
 
 
@@ -2157,11 +2357,12 @@ def _session_screen(sid: str, checked: Checked) -> None:
           on_control_change=_control_sent)
     if role == HOST:
         _host_controls(checked.shown)
-    st.button("Leave Session", on_click=_leave)
+    else:
+        st.button(_LEAVE_LABEL, on_click=_leave)
 
 
 def _host_controls(shown: Shown) -> None:
-    """The Time Limit, and to its right the Time Left Warning and its colour buttons (Terry, 2026-11-01); Start, Stop and Reset."""
+    """The Time Limit, and to its right the Time Left Warning and its colour buttons (Terry, 2026-11-01); Start, Stop and Reset, with Copy Link and Leave Session at the row's right (Terry, 2026-11-04)."""
     st.session_state.setdefault(_LIMIT_BOX, shown.limit)
     st.session_state.setdefault(_WARN_BOX, shown.warning)
     row = st.container(horizontal=True, vertical_alignment="bottom", wrap=True)
@@ -2175,7 +2376,9 @@ def _host_controls(shown: Shown) -> None:
     )
     buttons, chosen = shown.warning_buttons()
     picker = st.components.v2.component("speakertime_warn_colours", html=_PICKER_HTML, css=_PICKER_CSS, js=_PICKER_JS)
-    with row:
+    # The label is Streamlit's own, for its "?" like the boxes' beside it (Terry, 2026-11-04); at their labels' size (:small).
+    with row.container(gap=None, key=_PICKER_BOX):
+        st.markdown(f":small[{_WARNING_COLOUR_LABEL}]", help=_WARNING_COLOUR_HELP)
         picker(key=_PICKER, data={"buttons": buttons, "chosen": chosen, "auto": AUTO}, on_pick_change=_warning_colour_picked)
     row = st.container(horizontal=True)
     # A button that would do nothing is greyed (ratesplot's rule: grey what has no effect). Start reads Restart once the
@@ -2184,6 +2387,10 @@ def _host_controls(shown: Shown) -> None:
     row.button(start, key=_START_BUTTON, on_click=_control, args=("start",), disabled=shown.running, type="primary")
     row.button("Stop", on_click=_control, args=("stop",), disabled=not shown.running)
     row.button("Reset", on_click=_control, args=("reset",), disabled=not shown.running and shown.elapsed == 0)
+    row.space("stretch")
+    # Copy Link's work is in the browser, where the click may reach the clipboard (_CLOCK_JS, copyLink); its run does nothing.
+    row.button(_COPY_LABEL, key=_COPY_BUTTON)
+    row.button(_LEAVE_LABEL, on_click=_leave)
 
 
 def _live(sid: str, role: str) -> None:
