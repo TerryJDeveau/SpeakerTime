@@ -1251,7 +1251,9 @@ const fitted = (h, root) => {{
     scale = least / (page * panel);
   }}
   const down = (value) => Math.floor(value * 1000) / 1000;
-  return {{ page: down(page), panel: down(Math.max(FIT_LEAST, Math.min(1, scale, h.fitting.widest / page))) }};
+  // The column's scale reaches the panel inside it, so the panel's own may pass 1 where the column's is below it: what
+  // limits the panel is its size as drawn, never above its full size (widest starts at 1) or wider than its place.
+  return {{ page: down(page), panel: down(Math.max(FIT_LEAST, Math.min(scale, h.fitting.widest / page))) }};
 }};
 
 // Fits the page to its window after it connects to a session, as its elements
