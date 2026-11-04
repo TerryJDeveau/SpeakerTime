@@ -1075,15 +1075,28 @@ _BADGES_PX = 46
 
 # How a page has been fitted to its window (v1.13): its two scales, whether the fit has ended, whether every element of
 # the page's column stands inside the window, above the badges, and nothing has a scroll bar, the panel's size as drawn.
+# For a page that scrolls (v1.17): the frame in view and clear of the top bar, nothing sideways, how far it is scrolled,
+# the end of the page above the badges when scrolled there, how many times the room the text has it takes (web._FIT_TEXT),
+# and whether the title's text is clear of the bar.
 _FIT_SEEN = f"""() => {{
   const main = document.querySelector('[data-testid="stMain"]'), h = window.speakerTime;
   const column = document.querySelector('[data-testid="stMainBlockContainer"] > [data-testid="stVerticalBlock"]');
   const kids = [...column.children].map(k => k.getBoundingClientRect());
   const r = {_CLOCK_ROOT}, scroll = r.querySelector('.scroll'), panel = r.querySelector('.clock').getBoundingClientRect();
+  const padding = getComputedStyle(document.querySelector('[data-testid="stMainBlockContainer"]'));
+  const room = main.clientHeight - parseFloat(padding.paddingTop) - parseFloat(padding.paddingBottom) - 1;
+  const bar = document.querySelector('[data-testid="stHeader"]').getBoundingClientRect(), title = document.createRange();
+  title.selectNodeContents(column.querySelector('h3'));
   return {{ page: h.fitPage, panel: h.fitPanel, ended: h.fitting === null,
            inside: Math.min(...kids.map(k => k.top)) >= 0 && Math.max(...kids.map(k => k.bottom)) <= innerHeight - {_BADGES_PX}
              && Math.max(...kids.map(k => k.right)) <= innerWidth,
            bars: main.scrollHeight > main.clientHeight || main.scrollWidth > main.clientWidth || scroll.scrollWidth > scroll.clientWidth,
+           frame: panel.top >= bar.bottom && panel.bottom <= innerHeight,
+           sideways: main.scrollWidth > main.clientWidth || scroll.scrollWidth > scroll.clientWidth,
+           top: main.scrollTop,
+           reached: Math.max(...kids.map(k => k.bottom)) - (main.scrollHeight - main.clientHeight - main.scrollTop) <= innerHeight - {_BADGES_PX},
+           text: +((column.getBoundingClientRect().height - panel.height) / (room - panel.height)).toFixed(3),
+           titleClear: title.getBoundingClientRect().top >= bar.bottom - 2,
            size: [Math.round(panel.width), Math.round(panel.height)], window: [innerWidth, innerHeight] }};
 }}"""
 _COLUMN_ZOOM = """() => getComputedStyle(document.querySelector(
@@ -1091,8 +1104,13 @@ _COLUMN_ZOOM = """() => getComputedStyle(document.querySelector(
 _COOKIE_TEXT = "This page keeps small cookies"
 
 
+def scrolled(seen: dict) -> bool:
+    """A page in a small window (web._FIT_TEXT): settled, at its top, the frame in view, nothing sideways, and a scroll reaching the end above Community Cloud's badges."""
+    return seen["ended"] and seen["top"] == 0 and seen["frame"] and not seen["sideways"] and seen["reached"]
+
+
 def fitted_to_the_window(browser, errors: list[str], shot) -> None:
-    """21. On connecting, no part of the app is outside the tab's window; scaled down if need be, never up (Terry, 2026-11-03)."""
+    """21. On connecting, the app is fitted to the tab's window, scaled down if need be, never up (Terry, 2026-11-03); in a small window the frame is in view and a scroll reaches the rest (Terry, 2026-11-04)."""
     def fit_of(page: Page) -> dict:
         page.wait_for_function(f"() => {{ {_HAS_FIT}; }}", polling=100, timeout=15000)
         return on_clock(page, _FIT_SEEN)
@@ -1130,12 +1148,15 @@ def fitted_to_the_window(browser, errors: list[str], shot) -> None:
     seen = fit_of(roomy)
     ok("a window with room to spare: its full size, not larger", all_shown(seen) and (seen["page"], seen["panel"]) == (1, 1), seen)
 
-    # Windows too short for the panel alone to make room: the page's column is scaled too.
-    for sid, create, width, height, who in (("INDIA", False, 500, 400, "a viewer's page"), ("JULIET", True, 500, 400, "the host's page"),
-                                            ("INDIA", False, 390, 750, "a viewer's phone"), ("KILO", True, 390, 750, "the host's phone")):
+    # Windows too short for the panel alone to make room: the page's column is scaled too, and a scroll reaches the rest.
+    for sid, create, width, height, who, fits in (("INDIA", False, 500, 400, "a viewer's page", False), ("JULIET", True, 500, 400, "the host's page", False),
+                                                  ("INDIA", False, 390, 750, "a viewer's phone", True), ("KILO", True, 390, 750, "the host's phone", False)):
         page = connected(sid, create, width, height)
         seen = fit_of(page)
-        ok(f"{who} in a window of {width} by {height}: all of it inside, no scroll bar", all_shown(seen), seen)
+        if fits:
+            ok(f"{who} in a window of {width} by {height}: all of it inside, no scroll bar", all_shown(seen), seen)
+        else:
+            ok(f"{who} in a window of {width} by {height}: at its top, the frame in view, nothing sideways, a scroll reaching the end above the badges", scrolled(seen), seen)
         if (width, create) == (500, True):
             ok("too short for the panel alone: the page's column scaled too", seen["page"] < 1, seen)
             shot(page, "14-fit-small.png")
@@ -1178,7 +1199,7 @@ def fitted_to_the_window(browser, errors: list[str], shot) -> None:
     roomy.get_by_text("You are viewing it.").wait_for(timeout=8000)
     roomy.wait_for_function("(before) => window.speakerTime.entered !== before", arg=entered, polling=100, timeout=8000)
     seen = fit_of(roomy)
-    ok("connecting again in a smaller window: fitted to it", all_shown(seen) and seen["page"] * seen["panel"] < 1, seen)
+    ok("connecting again in a smaller window: fitted to it, at its top though the start screen was scrolled to reach its button", scrolled(seen) and seen["page"] * seen["panel"] < 1, seen)
     host.close()
     button(small_viewer, "Yes").wait_for(timeout=(HOST_GRACE_S + 10) * 1000)
     entered = small_viewer.evaluate("window.speakerTime.entered")
@@ -1187,7 +1208,7 @@ def fitted_to_the_window(browser, errors: list[str], shot) -> None:
     # The role's text comes before the clock's data: until that arrives, the last fit is what there is to read.
     small_viewer.wait_for_function("(before) => window.speakerTime.entered !== before", arg=entered, polling=100, timeout=8000)
     seen = fit_of(small_viewer)
-    ok("a viewer becoming the host: fitted again, with the host's controls", all_shown(seen), seen)
+    ok("a viewer becoming the host: fitted again, with the host's controls", scrolled(seen), seen)
     for page in (viewer, roomy, small_viewer):
         page.context.close()
 
@@ -1424,6 +1445,13 @@ _DAYNIGHT_IN_WINDOW = """() => {
            on: document.querySelector('.daynight button.on')?.dataset.d ?? null };
 }"""
 _DAYNIGHT_COOKIE = "speakertime_daynight="
+# Each of its buttons' text, background and underline, on a panel (``root`` the clock's shadow root) or a pop-out (its document).
+_DAYNIGHT_BUTTONS = """(root) => Object.fromEntries(['day', 'night'].map((d) => {
+  const s = getComputedStyle(root.querySelector('.daynight button[data-d="' + d + '"]'));
+  return [d, [s.color, s.backgroundColor, s.textDecorationLine]];
+}))"""
+_DAYNIGHT_BUTTONS_PANEL = f"() => ({_DAYNIGHT_BUTTONS})({_CLOCK_ROOT})"
+_DAYNIGHT_BUTTONS_WINDOW = f"() => ({_DAYNIGHT_BUTTONS})(document)"
 
 
 def day_and_night(browser, errors: list[str], shot) -> None:
@@ -1431,6 +1459,10 @@ def day_and_night(browser, errors: list[str], shot) -> None:
     white, black, yellow, green = rgb("#ffffff"), rgb("#000000"), rgb(CLOCK_COLOURS["yellow"]), rgb(CLOCK_COLOURS["green"])
     night, day = [black, white, white, white], [white, black, black, black]
     size = {"width": 800, "height": 1300}
+
+    def buttons(on: str) -> dict:
+        """Day black on white and Night white on black, whichever is on (Terry, 2026-11-04), the one on underlined."""
+        return {"day": [black, white, "underline" if on == "day" else "none"], "night": [white, black, "underline" if on == "night" else "none"]}
 
     def connected(context, sid: str, create: bool) -> Page:
         page = context.new_page()
@@ -1463,6 +1495,8 @@ def day_and_night(browser, errors: list[str], shot) -> None:
     seen = on_clock(viewer, _DAYNIGHT_SEEN)
     ok("a viewer's panel has Day and Night, Night on under a black session", seen == {"shown": True, "labels": ["Day", "Night"], "on": "night"}, seen)
     ok("the host's panel has neither", on_clock(host, _DAYNIGHT_SEEN)["shown"] is False)
+    seen = on_clock(viewer, _DAYNIGHT_BUTTONS_PANEL)
+    ok("Day black on white and Night white on black, Night underlined as the one on", seen == buttons("night"), seen)
 
     # Never pressed: no effect at all, the viewer following the host either way. The one shown is not a press.
     on_clock(viewer, _DAYNIGHT_PRESS, "night")
@@ -1480,6 +1514,8 @@ def day_and_night(browser, errors: list[str], shot) -> None:
     on_clock(viewer, _DAYNIGHT_PRESS, "day")
     seen = painted(viewer)
     ok("Day pressed: at once the panel white, its text and timers black", seen == day, seen)
+    seen = settled(lambda: on_clock(viewer, _DAYNIGHT_BUTTONS_PANEL), buttons("day"), 2.0)
+    ok("the buttons in the same colours under Day, Day underlined now", seen == buttons("day"), seen)
     ok("kept, and the host's own panel still black", kept(viewer) and painted(host) == night, painted(host))
     shot(viewer, "16-day.png")
 
@@ -1535,11 +1571,15 @@ def day_and_night(browser, errors: list[str], shot) -> None:
     viewer.wait_for_timeout(1000)
     seen = pip.evaluate(_DAYNIGHT_IN_WINDOW)
     ok("a viewer's pop-out opens at its Night", seen == {"painted": night, "on": "night"}, seen)
+    seen = pip.evaluate(_DAYNIGHT_BUTTONS_WINDOW)
+    ok("its buttons Day black on white and Night white on black, Night underlined", seen == buttons("night"), seen)
     line = pip.evaluate(_LINE_SEEN)
     ok("on one line with the full H:MM:SS|MMM.M, inside its window", (line["modes"], line["daynight"], line["oneRow"], line["inside"]) == (_FULL_MODES, True, True, True), line)
     pip.locator('.daynight button[data-d="day"]').click()
     seen = settled(lambda: pip.evaluate(_DAYNIGHT_IN_WINDOW), {"painted": day, "on": "day"}, 2.0)
     ok("Day pressed in the pop-out: its background white, its text and figures black", seen == {"painted": day, "on": "day"}, seen)
+    seen = settled(lambda: pip.evaluate(_DAYNIGHT_BUTTONS_WINDOW), buttons("day"), 2.0)
+    ok("its buttons in the same colours, Day underlined now", seen == buttons("day"), seen)
     seen = after(viewer, day)
     ok("and the panel with it", seen == day, seen)
     shot(pip, "17-popout-day.png")
@@ -1640,7 +1680,7 @@ def host_row_and_link(browser, errors: list[str], shot) -> None:
 
 
 def frame_minimum_and_recovery(browser, errors: list[str]) -> None:
-    """26. The frame's minimum in a small window, twice what it was (Terry, 2026-11-04); the fit cannot run away, and has a last look (a page left at the floor, seen once live)."""
+    """26. The frame's minimum in a small window, twice what it was, and the text around it half as large again as all inside would leave it, a scroll reaching the rest (Terry, 2026-11-04); the fit cannot run away, and has a last look (a page left at the floor, seen once live)."""
     def connected(context, sid: str, create: bool) -> Page:
         page = context.new_page()
         page.on("pageerror", lambda error: errors.append(f"frame: {error}"))
@@ -1659,27 +1699,37 @@ def frame_minimum_and_recovery(browser, errors: list[str]) -> None:
         page.wait_for_function(f"() => {{ {_HAS_FIT}; }}", polling=100, timeout=20000)
         return on_clock(page, _FIT_SEEN)
 
-    # The room is the window less the column's padding (2 x 3.2 rem) and a pixel; the panel keeps 2/3 of it, up to 250 px.
+    # The room is the window less the column's padding (about 2 x 3.2 rem) and a pixel; the panel keeps 2/3 of it, up to 250 px.
     host = connected(sized(1545, 784), "UNIFORM", True)
     usual = fit_of(host)
     ok("a window of the usual size left as it was: the page's text at full size", usual["page"] == 1 and usual["size"][1] > 250, usual)
+    # A column's scale of 1.5 times what would keep all of the page inside the window takes 1.5 times the room its text has.
     for width, height, want, was, who in ((500, 400, 198, 99, "a viewer's page"), (700, 500, 250, 132, "a viewer's page")):
         page = connected(sized(width, height), "UNIFORM", False)
         seen = fit_of(page)
-        ok(f"{who} in a window of {width} by {height}: the panel {want} px high (it was {was}), the page's column scaled, all inside",
-           abs(seen["size"][1] - want) <= 12 and seen["page"] < 1 and seen["inside"], seen)
+        ok(f"{who} in a window of {width} by {height}: the panel {want} px high (it was {was}), the text half as large again as all inside would leave it, a scroll reaching the rest, the title clear of the top bar",
+           abs(seen["size"][1] - want) <= 12 and seen["page"] < 1 and 1.4 <= seen["text"] <= 1.55 and scrolled(seen) and seen["titleClear"], seen)
         if width == 500:
             small = page
         else:
             page.context.close()
+    laptop = connected(sized(1366, 600), "LAPTOP", True)
+    seen = fit_of(laptop)
+    ok("the host's page on a small laptop, 1366 by 600: the panel 250 px high, the text half as large again as all inside would leave it (0.621 before), a scroll reaching the rest",
+       abs(seen["size"][1] - 250) <= 12 and 0.85 <= seen["page"] < 1 and 1.4 <= seen["text"] <= 1.55 and scrolled(seen), seen)
+    laptop.context.close()
+    laptop = connected(sized(1366, 600), "UNIFORM", False)
+    seen = fit_of(laptop)
+    ok("a viewer's page there: never above its full size, though half as large again would be", seen["page"] == 1 and abs(seen["size"][1] - 250) <= 12 and seen["text"] < 1.4 and scrolled(seen), seen)
+    laptop.context.close()
     tiny = connected(sized(320, 200), "UNIFORM", False)
     seen = fit_of(tiny)
-    ok("a window of almost no height: neither scale below 0.2", seen["page"] >= 0.2 and seen["panel"] >= 0.2, seen)
+    ok("a window of almost no height: the panel's scale not below 0.2, the column's not below 0.3, the frame in view", seen["page"] >= 0.3 and seen["panel"] >= 0.2 and scrolled(seen), seen)
     tiny.context.close()
 
     # A window where the column's scale changes how the text wraps: at 1 the host's page needs 0.565, and at 0.565 it
-    # measures as if 1 would fit. It must settle, inside the window, whatever the timing (it flipped until the fit's time
-    # ran out, passing or failing by chance): so several pages, and how many times each changed its scales.
+    # measures as if 1 would fit. It must settle whatever the timing (it flipped until the fit's time ran out, passing or
+    # failing by chance): so several pages, and how many times each changed its scales.
     counting = """() => { const before = () => window.speakerTime?.fitPage; let last = before(); window.__flips = 0;
       setInterval(() => { const now = before(); if (now !== last) { last = now; window.__flips += 1; } }, 20); }"""
     for attempt in range(1, 5):
@@ -1695,8 +1745,8 @@ def frame_minimum_and_recovery(browser, errors: list[str]) -> None:
         page.get_by_text("You are the host.").wait_for(timeout=8000)
         seen = fit_of(page)
         flips = page.evaluate("window.__flips")
-        ok(f"the host's page at 390 by 750 (try {attempt}): settled inside the window, its scale changing only a few times",
-           seen["inside"] and not seen["bars"] and flips <= 6, [flips, seen])
+        ok(f"the host's page at 390 by 750 (try {attempt}): settled, the frame in view, a scroll reaching the rest, its scale changing only a few times",
+           scrolled(seen) and flips <= 6, [flips, seen])
         context.close()
 
     # A fit forced to be past its time for rising (3 s), as a page arriving slowly may be.
@@ -1708,8 +1758,8 @@ def frame_minimum_and_recovery(browser, errors: list[str]) -> None:
     small.wait_for_timeout(800)
     seen = on_clock(small, _FIT_SEEN)
     small.evaluate("document.getElementById('nozoom').remove()")
-    # The page's full-size text wraps a little differently, so its scale may move a little; what it must not do is run away to 0.2.
-    ok("measured with the column's scale not in effect: no fall to the floor", abs(seen["page"] - before["page"]) <= 0.05, [before, seen])
+    # The page's full-size text wraps a little differently, so its scale may move a little; what it must not do is run away to its floor.
+    ok("measured with the column's scale not in effect: no fall to the floor", abs(seen["page"] - before["page"]) <= 0.08, [before, seen])
     fit_of(small)
 
     before = fit_of(small)
@@ -1719,9 +1769,9 @@ def frame_minimum_and_recovery(browser, errors: list[str]) -> None:
     fallen = on_clock(small, _FIT_SEEN)
     small.evaluate("document.getElementById('tall').remove()")
     seen = fit_of(small)
-    # Fitted afresh, it may stand a little off where the last check left it (0.295 and 0.316 have both been seen here): the wrapping again.
-    ok("something tall for a moment, late: the scales fall to the floor, and a fit settled there is begun once more",
-       fallen["page"] == 0.2 and abs(seen["page"] - before["page"]) <= 0.05 and seen["inside"] and not seen["bars"], [before, fallen, seen])
+    # Fitted afresh, it may stand a little off where the last check left it: the wrapping again.
+    ok("something tall for a moment, late: the column's scale falls to its floor, and a fit settled there is begun once more",
+       fallen["page"] == 0.3 and abs(seen["page"] - before["page"]) <= 0.08 and scrolled(seen), [before, fallen, seen])
 
     # No window yet (Community Cloud's frame hidden): the fit's time does not run out.
     small.evaluate(force, 9500)
@@ -1730,7 +1780,7 @@ def frame_minimum_and_recovery(browser, errors: list[str]) -> None:
     waiting = small.evaluate("window.speakerTime.fitting !== null")
     small.evaluate("document.querySelector('[data-testid=\"stMain\"]').style.display = ''")
     seen = fit_of(small)
-    ok("the page hidden past the fit's limit: it still waits, and ends once there is a window", waiting and seen["ended"] and seen["inside"], [waiting, seen])
+    ok("the page hidden past the fit's limit: it still waits, and ends once there is a window", waiting and scrolled(seen), [waiting, seen])
     small.context.close()
 
     # The way the floor was seen: a page waiting on a link, connecting when its session is created. Here with an empty
