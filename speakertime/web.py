@@ -84,10 +84,13 @@ and Leave Session forgets it.
 Fitted to the window on connecting (Terry, 2026-11-03)
 ------------------------------------------------------
 When a page enters a session (``_enter``: a new count in the clock's data),
-its script scales it so that all of it is inside the tab's window, down only
-(``_FIT_SHARE``, ``fit``). The panel shrinks first and the text around it keeps
-its size; in a window too short for that the page's column shrinks as well.
-After that the sliders and the window are the user's.
+its script scales it to the tab's window, down only (``_FIT_SHARE``, ``fit``).
+The panel shrinks first and the text around it keeps its size, all of the page
+inside the window. In a window too short for that the page's column shrinks as
+well, though not so far that all of it stays inside: the text and controls stand
+half as large again as that would leave them (``_FIT_TEXT``, Terry, 2026-11-04),
+and the page scrolls to reach the rest. After that the sliders and the window
+are the user's.
 
 What the browser keeps
 ----------------------
@@ -286,8 +289,10 @@ _FIT_SHARE = 2 / 3
 """In a small window the panel keeps this share of the window's height, the whole column shrinking to leave it that (v1.16, Terry, 2026-11-04: twice the 1/3 it had)."""
 _FIT_PANEL_PX = 250
 """... up to this height as drawn, so that a window of the usual size is left as it was: the panel alone shrinks there, the text around it keeping its size."""
+_FIT_TEXT = 1.5
+"""In a window where the column has to shrink, its text and controls stand this many times what would keep all of the page inside the window, up to their full size, and the page scrolls to reach the rest; the panel's size as drawn stays as it was (v1.17, Terry, 2026-11-04: at v1.16's sizes on a small laptop "a bit too small. They need to be about 50% larger, even if that means the page has to rely on a vertical scroll to reach the bottom.")."""
 _FIT_LEAST = 0.2
-"""The smallest either scale goes (v1.16: twice the 0.1 it had): a window of almost no height shows the page unreadably small as it is, and browsers keep a smallest font."""
+"""The smallest the panel's scale goes, and, times ``_FIT_TEXT``, the column's (v1.16: twice the 0.1 it had): a window of almost no height shows the page unreadably small as it is, and browsers keep a smallest font."""
 _FIT_GROW_MS = 3000
 """For this long after connecting the scales may rise again as well as fall: elements on their way out may have been measured."""
 _FIT_SETTLED_MS = 1500
@@ -386,7 +391,7 @@ _DAYNIGHT_THEMES = {_DAY: LIGHT, _NIGHT: DARK}
 _DAYNIGHT_HTML = '<div class="daynight" role="group" aria-label="Show the panel by day or by night" hidden>' + "".join(
     f'<button type="button" data-d="{choice}">{choice.capitalize()}</button>' for choice in _DAYNIGHT_THEMES
 ) + "</div>"
-"""A viewer's Day/Night toggle (Terry, 2026-11-04), on its panel and pop-out or pop-up; a page's script keeps the choice (``hub``, shownLook)."""
+"""A viewer's Day/Night toggle (Terry, 2026-11-04), on its panel and pop-out or pop-up; a page's script keeps the choice (``hub``, shownLook). Each button is in the colours it stands for, whichever is on (v1.17, Terry: "Day" black on white, "Night" the opposite), so the one on is underlined (_SHARED_CSS)."""
 
 
 def _cell(name: str, extra: str = "") -> str:
@@ -442,7 +447,10 @@ _SHARED_CSS = f"""
 .pair .cell {{ flex: 0 1 auto; min-width: 0; }}
 .pair .label {{ text-align: center; }}
 .pair .cell[hidden] {{ display: none; }}
-.modes button.on, .daynight button.on {{ background: var(--text); color: var(--panel); }}
+.modes button.on {{ background: var(--text); color: var(--panel); }}
+.daynight button[data-d="{_DAY}"] {{ background: {_THEMES[LIGHT]["panel"]}; color: {_THEMES[LIGHT]["text"]}; }}
+.daynight button[data-d="{_NIGHT}"] {{ background: {_THEMES[DARK]["panel"]}; color: {_THEMES[DARK]["text"]}; }}
+.daynight button.on {{ text-decoration: underline; text-underline-offset: 2px; }}
 .daynight[hidden] {{ display: none; }}
 """
 
@@ -1181,6 +1189,7 @@ const NOT_COPIED_LABEL = {json.dumps(_NOT_COPIED_LABEL)};
 const COPY_SHOWN_MS = {_COPY_SHOWN_MS};
 const FIT_SHARE = {_FIT_SHARE};
 const FIT_PANEL_PX = {_FIT_PANEL_PX};
+const FIT_TEXT = {_FIT_TEXT};
 const FIT_LEAST = {_FIT_LEAST};
 const FIT_GROW_MS = {_FIT_GROW_MS};
 const FIT_SETTLED_MS = {_FIT_SETTLED_MS};
@@ -1217,8 +1226,8 @@ const lookElsewhere = (h) => {{
   }}, () => {{}});
 }};
 
-// The scales that fit the page to its window (_FIT_SHARE), worked out from the
-// page as it stands at the scales it has: the panel as it would be unscaled,
+// The scales that fit the page to its window (_FIT_SHARE, _FIT_TEXT), worked out from
+// the page as it stands at the scales it has: the panel as it would be unscaled,
 // and the rest of the column at the column's scale alone. The column's padding
 // is outside its scale, so that the title stays clear of Streamlit's top bar.
 // A panel still wider than its place sets the most the two may come to.
@@ -1234,7 +1243,7 @@ const fitted = (h, root) => {{
   if (room <= 0 || drawn <= 0) return null;
   // The scales in effect, not those asked for: while the column's rule does not hold yet (_PAGE_STYLE), or its elements
   // are still arriving, dividing by the scale asked for makes the rest of the page look larger the smaller the scale,
-  // and the page falls to FIT_LEAST in a few draws.
+  // and the page falls to its floor in a few draws.
   const zoomed = (element) => parseFloat(getComputedStyle(element).zoom) || 1;
   const pageNow = zoomed(column), panelNow = zoomed(root);
   const panel = drawn / (pageNow * panelNow);
@@ -1248,7 +1257,9 @@ const fitted = (h, root) => {{
   let scale = (room - others * page) / (page * panel);
   const least = Math.min(FIT_SHARE * room, FIT_PANEL_PX, panel);  // the panel's height as drawn, in a small window
   if (scale * page < 1 && scale * page * panel < least) {{
-    page = Math.max(FIT_LEAST, Math.min(most, (room - least) / others));
+    // The panel at its least, and the text and controls around it FIT_TEXT times what would keep all of the page inside
+    // the window: the page scrolls to reach the rest.
+    page = Math.min(most, FIT_TEXT * Math.max(FIT_LEAST, (room - least) / others));
     scale = least / (page * panel);
   }}
   const down = (value) => Math.floor(value * 1000) / 1000;
@@ -1301,7 +1312,7 @@ const fit = (h, root) => {{
   }} else if (now - f.changed > FIT_SETTLED_MS) {{
     // Settled at the floor: fitted once more, what was measured while the page arrived not having been the page.
     // Seen once, 2026-11-04: a page left at the floor that a reload fitted at 1 and 0.609.
-    h.fitting = !f.looked && h.fitPage <= FIT_LEAST + 0.001 ? {{ ...fitStart(now), looked: true }} : null;
+    h.fitting = !f.looked && h.fitPage <= FIT_TEXT * FIT_LEAST + 0.001 ? {{ ...fitStart(now), looked: true }} : null;
   }}
 }};
 
@@ -1533,6 +1544,8 @@ export default function (component) {{
   if (h.entered !== data.entered) {{
     h.entered = data.entered;
     h.fitting = fitStart(performance.now());
+    // A page that may scroll (_FIT_TEXT) starts at its top, not where the start screen was left to reach its buttons.
+    document.querySelector('[data-testid="stMain"]')?.scrollTo(0, 0);
     h.dayNight = null;  // read again: Leave Session may have forgotten it
   }}
   root.classList.toggle("host", data.host);
@@ -1807,6 +1820,11 @@ export default function (component) {{
 _PAGE_STYLE = """
 <style>
 [data-testid="stMainBlockContainer"] { padding-top: 3.2rem; padding-bottom: 3.2rem; }
+/* Streamlit's top bar is 3.75rem high and the title's own space above it (0.75rem) shrinks with the column, so a column
+   fitted small would put the title partly under the bar (seen live at 500 by 400): the padding makes up the difference. */
+[data-testid="stMainBlockContainer"]:has(> [data-testid="stVerticalBlock"] > .st-key-clock) {
+  padding-top: max(3.2rem, calc(3.75rem - 0.75rem * var(--speakertime-page, 1)));
+}
 /* The page is wide so that the clock can span the window (Terry, 2026-11-03: twice the largest figures); everything
    else keeps the centred column it had (44rem, 704 px), each element where it stood in it. */
 [data-testid="stMainBlockContainer"] > [data-testid="stVerticalBlock"] > :not(.st-key-clock) {
