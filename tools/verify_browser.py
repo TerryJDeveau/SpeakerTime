@@ -5,7 +5,8 @@ session's life through: waiting for a session not yet created, a taken ID,
 the timers agreeing on every screen, reloads, the host's window closed and
 "Assume Host Role?", a creator who comes back, Leave Session, the pop-out
 window, the pop-ups offered while another tab of the browser has it, a
-tab holding an earlier version's state, and the host's Buzzer.
+tab holding an earlier version's state, the host's Buzzer, and the page
+fitted to its window on connecting.
 Prints each check and exits 1 on any failure.
 
 Needs Playwright (``pip install playwright``) and a Chromium: ``--chrome``
@@ -225,8 +226,9 @@ def run(url: str, launch: dict, shots: Path | None) -> None:
 
     with sync_playwright() as p:
         browser = p.chromium.launch(**launch)
+        # Tall enough that these pages keep their full size: the fit to a window is fitted_to_the_window's to check.
         contexts = {name: browser.new_context(viewport=size) for name, size in
-                    [("A", {"width": 800, "height": 900}), ("B", {"width": 420, "height": 800}), ("C", {"width": 420, "height": 800})]}
+                    [("A", {"width": 800, "height": 1500}), ("B", {"width": 420, "height": 1500}), ("C", {"width": 420, "height": 1500})]}
         errors: list[str] = []
 
         def open_page(name: str) -> Page:
@@ -407,6 +409,8 @@ def run(url: str, launch: dict, shots: Path | None) -> None:
         windows_of_one_browser(browser, errors)
         popups_of_one_browser(browser, errors, shot)
         buzzer_held(browser, errors, shot)
+        buzzer_silent(browser, errors)
+        fitted_to_the_window(browser, errors, shot)
 
         ok("no script errors on any page", not errors, errors)
         browser.close()
@@ -917,7 +921,7 @@ def quiet(page: Page):
 
 
 def buzzer_held(browser, errors: list[str], shot) -> None:
-    """20. The host's Buzzer (Terry, 2026-11-03): held, BUZZ in red everywhere and a buzzer at every viewer; let go, the time again."""
+    """20. The host's Buzzer (Terry, 2026-11-03): held, BUZZ in red everywhere and a buzzer on every page (v1.13: the host's too); let go, the time again."""
     pages = []
     for create in (True, False):
         page = browser.new_context(viewport={"width": 700, "height": 800}).new_page()
@@ -960,8 +964,11 @@ def buzzer_held(browser, errors: list[str], shot) -> None:
     host.mouse.down()
     began = time.monotonic()
     seen = on_clock(host, _BUZZ_SEEN)
-    ok("held: BUZZ on the host's panel at once, in steady red; no sound on the host's page",
-       (seen["remaining"], seen["colour"], seen["blink"], seen["over"], seen["audio"]) == ("BUZZ", rgb("#ff2a2a"), False, False, None), seen)
+    ok("held: BUZZ on the host's panel at once, in steady red",
+       (seen["remaining"], seen["colour"], seen["blink"], seen["over"]) == ("BUZZ", rgb("#ff2a2a"), False, False), seen)
+    seen = settled(lambda: [on_clock(host, _BUZZ_SEEN)[k] for k in ("audio", "sounding")], ["running", True], 1.0)
+    ok("and the buzzer sounds on the host's page at once", seen == ["running", True], seen)
+    host.evaluate("window.speakerTime.tone.mark = 1")  # the same sound later on: check-ins have not broken it up
     seen = settled(everywhere, ["BUZZ"] * 3, 2.5)
     ok("and on a viewer's panel and its pop-out within 2.5 s", seen == ["BUZZ"] * 3, [seen, f"{(time.monotonic() - began) * 1000:.0f} ms"])
     seen = read(_BUZZ_SEEN)
@@ -971,7 +978,9 @@ def buzzer_held(browser, errors: list[str], shot) -> None:
     host.wait_for_timeout((BUZZ_HOLD_S + 2) * 1000 - (time.monotonic() - began) * 1000)
     seen = everywhere()
     ok(f"held {BUZZ_HOLD_S + 2:.0f} s: still BUZZ everywhere (the host's page says so again)", seen == ["BUZZ"] * 3, seen)
+    ok("and the host's page's sound one unbroken sound", host.evaluate("window.speakerTime.tone?.mark === 1"))
     host.mouse.up()
+    ok("let go: the host's page's sound stops at once", on_clock(host, _BUZZ_SEEN)["sounding"] is False)
     seen = settled(lambda: [t != "BUZZ" for t in everywhere()] + [read(_BUZZ_SEEN)["sounding"]], [True, True, True, False], 2.5)
     ok("let go: the time again everywhere within 2.5 s, the sound stopped", seen == [True, True, True, False], [everywhere(), seen])
 
@@ -1006,6 +1015,169 @@ def buzzer_held(browser, errors: list[str], shot) -> None:
     ok("the host's page closed while held: let go within 2.5 s", seen is True, f"{time.monotonic() - closed:.1f} s")
     viewer.context.close()
 
+
+_SILENT_TEXT = "No buzzer sound on this page."
+
+
+def buzzer_silent(browser, errors: list[str]) -> None:
+    """20b. A page whose address says silent makes no sound, host or viewer, and says so; BUZZ still shows, and the other pages sound (Terry, 2026-11-03)."""
+    def opened(address: str, create: bool) -> Page:
+        page = browser.new_context(viewport={"width": 700, "height": 800}).new_page()
+        page.on("pageerror", lambda error: errors.append(f"silent: {error}"))
+        page.goto(profile_url + address)
+        page.locator('[data-testid="stApp"]').wait_for()
+        page.wait_for_timeout(2000)
+        id_box(page).fill("GOLF")
+        button(page, "Create New Session" if create else "Connect to Session").click()
+        page.get_by_text("You are the host." if create else "You are viewing it.").wait_for(timeout=5000)
+        return page
+
+    host, hushed, plain = opened("?silent", True), opened("?-silent", False), opened("", False)
+    ok("a silent page says so, the others do not",
+       [_SILENT_TEXT in main_text(p) for p in (host, hushed, plain)] == [True, True, False])
+    host.wait_for_timeout(1000)  # a page may sound from its next draw
+
+    def pages(key: str) -> list[object]:
+        return [on_clock(p, _BUZZ_SEEN)[key] for p in (host, hushed, plain)]
+
+    box = host.locator(".buzzer").bounding_box()
+    host.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+    host.mouse.down()
+    seen = settled(lambda: pages("remaining"), ["BUZZ"] * 3, 2.5)
+    ok("held on a silent host's page: BUZZ on every page", seen == ["BUZZ"] * 3, seen)
+    seen = settled(lambda: pages("sounding"), [False, False, True], 1.0)
+    ok("no sound on the two silent pages, nor any sound made ready; the other page sounds",
+       seen == [False, False, True] and pages("audio")[:2] == [None, None], [seen, pages("audio")])
+    host.mouse.up()
+    seen = settled(lambda: pages("sounding")[2], False, 2.5)
+    ok("let go: the other page's sound stops", seen is False, seen)
+    # A silent viewer's page reconnected by itself has no sound to ask a click for: no note.
+    read = quiet(hushed)
+    hushed.reload()
+    settled(lambda: read("document.body.innerText.includes('You are viewing it.')"), True, 8.0)
+    hushed.wait_for_timeout(1500)
+    seen = read(_BUZZ_SEEN)
+    ok("a silent viewer's page reconnected: no note to click it, and still silent after a reload",
+       (seen or {}).get("note") is None and _SILENT_TEXT in read("document.body.innerText"), seen)
+    for page in (host, hushed, plain):
+        page.context.close()
+
+
+# How a page has been fitted to its window (v1.13): its two scales, whether the fit has ended, whether every element of
+# the page's column stands inside the window and nothing has a scroll bar, the panel's size as drawn, and the column's zoom.
+_FIT_SEEN = f"""() => {{
+  const main = document.querySelector('[data-testid="stMain"]'), h = window.speakerTime;
+  const column = document.querySelector('[data-testid="stMainBlockContainer"] > [data-testid="stVerticalBlock"]');
+  const kids = [...column.children].map(k => k.getBoundingClientRect());
+  const r = {_CLOCK_ROOT}, scroll = r.querySelector('.scroll'), panel = r.querySelector('.clock').getBoundingClientRect();
+  return {{ page: h.fitPage, panel: h.fitPanel, ended: h.fitting === null,
+           inside: Math.min(...kids.map(k => k.top)) >= 0 && Math.max(...kids.map(k => k.bottom)) <= innerHeight
+             && Math.max(...kids.map(k => k.right)) <= innerWidth,
+           bars: main.scrollHeight > main.clientHeight || main.scrollWidth > main.clientWidth || scroll.scrollWidth > scroll.clientWidth,
+           size: [Math.round(panel.width), Math.round(panel.height)], window: [innerWidth, innerHeight] }};
+}}"""
+_COLUMN_ZOOM = """() => getComputedStyle(document.querySelector(
+  '[data-testid="stMainBlockContainer"] > [data-testid="stVerticalBlock"]')).zoom"""
+_COOKIE_TEXT = "This page keeps small cookies"
+
+
+def fitted_to_the_window(browser, errors: list[str], shot) -> None:
+    """21. On connecting, no part of the app is outside the tab's window; scaled down if need be, never up (Terry, 2026-11-03)."""
+    def fit_of(page: Page) -> dict:
+        page.wait_for_function(f"() => {{ {_HAS_FIT}; }}", polling=100, timeout=15000)
+        return on_clock(page, _FIT_SEEN)
+
+    def connected(sid: str, create: bool, width: int, height: int) -> Page:
+        page = browser.new_context(viewport={"width": width, "height": height}).new_page()
+        page.on("pageerror", lambda error: errors.append(f"fit: {error}"))
+        page.goto(profile_url)
+        page.locator('[data-testid="stApp"]').wait_for()
+        page.wait_for_timeout(1500)
+        id_box(page).fill(sid)
+        button(page, "Create New Session" if create else "Connect to Session").click()
+        page.get_by_text("You are the host." if create else "You are viewing it.").wait_for(timeout=8000)
+        return page
+
+    def all_shown(seen: dict) -> bool:
+        return seen["ended"] and seen["inside"] and not seen["bars"]
+
+    # In a window of the usual size the panel alone is scaled, the text around it keeping its size.
+    host = connected("INDIA", True, 1545, 784)
+    seen = fit_of(host)
+    ok("the host's page in a window of 1545 by 784: all of it inside, no scroll bar, the panel alone scaled",
+       all_shown(seen) and seen["page"] == 1 and seen["panel"] < 1, seen)
+    note = host.get_by_text(_COOKIE_TEXT).bounding_box()
+    ok("the cookie note inside the window too", note is not None and note["y"] + note["height"] <= 784, note)
+    shot(host, "12-fit-host.png")
+    viewer = connected("INDIA", False, 1545, 784)
+    seen = fit_of(viewer)
+    ok("a viewer's page the same, its panel larger for having less around it",
+       all_shown(seen) and seen["page"] == 1 and on_clock(host, _FIT_SEEN)["panel"] < seen["panel"] < 1, seen)
+    shot(viewer, "13-fit-viewer.png")
+
+    # Room to spare: never scaled up.
+    roomy = connected("INDIA", False, 1545, 1300)
+    seen = fit_of(roomy)
+    ok("a window with room to spare: its full size, not larger", all_shown(seen) and (seen["page"], seen["panel"]) == (1, 1), seen)
+
+    # Windows too short for the panel alone to make room: the page's column is scaled too.
+    for sid, create, width, height, who in (("INDIA", False, 500, 400, "a viewer's page"), ("JULIET", True, 500, 400, "the host's page"),
+                                            ("INDIA", False, 390, 750, "a viewer's phone"), ("KILO", True, 390, 750, "the host's phone")):
+        page = connected(sid, create, width, height)
+        seen = fit_of(page)
+        ok(f"{who} in a window of {width} by {height}: all of it inside, no scroll bar", all_shown(seen), seen)
+        if (width, create) == (500, True):
+            ok("too short for the panel alone: the page's column scaled too", seen["page"] < 1, seen)
+            shot(page, "14-fit-small.png")
+        if (width, create) == (500, False):
+            small_viewer = page
+        else:
+            page.context.close()
+
+    # The host's sizes at the largest: a page connecting now is scaled to their width as well.
+    before = on_clock(host, _FIT_SEEN)
+    for timer in ("elapsed", "remaining"):
+        on_clock(host, _SLIDE, [timer, 800])
+        host.wait_for_timeout(1500)
+    late = connected("INDIA", False, 1100, 700)
+    seen = fit_of(late)
+    ok("a page connecting with the sizes at 800: all of it inside, no scroll bar", all_shown(seen) and seen["panel"] < before["panel"], seen)
+    late.context.close()
+
+    # After that the sliders and the window are the user's: the scales stay, and a panel made too wide has its scroll bar.
+    seen = on_clock(host, _FIT_SEEN)
+    ok("the host's sliders moved after connecting: its scale unchanged, the panel larger",
+       (seen["page"], seen["panel"]) == (before["page"], before["panel"]) and seen["size"][0] > before["size"][0], [before, seen])
+    held = on_clock(viewer, _FIT_SEEN)
+    viewer.set_viewport_size({"width": 1000, "height": 500})
+    viewer.wait_for_timeout(800)
+    seen = on_clock(viewer, _FIT_SEEN)
+    ok("a window made smaller after connecting: its scale unchanged", (seen["page"], seen["panel"]) == (held["page"], held["panel"]), [held, seen])
+
+    # Connecting again fits again: a reload, a session entered after leaving, a viewer becoming the host.
+    host.reload()
+    host.get_by_text("You are the host.").wait_for(timeout=8000)
+    seen = fit_of(host)
+    ok("the host's page reloaded with the sizes at 800: fitted again", all_shown(seen) and seen["panel"] < before["panel"], seen)
+    roomy.set_viewport_size({"width": 1000, "height": 500})
+    button(roomy, "Leave Session").click()
+    button(roomy, "Connect to Session").wait_for()
+    ok("Leave Session: the start screen at its full size", roomy.evaluate(_COLUMN_ZOOM) == "1", roomy.evaluate(_COLUMN_ZOOM))
+    button(roomy, "Connect to Session").click()
+    roomy.get_by_text("You are viewing it.").wait_for(timeout=8000)
+    seen = fit_of(roomy)
+    ok("connecting again in a smaller window: fitted to it", all_shown(seen) and seen["panel"] < 1, seen)
+    host.close()
+    button(small_viewer, "Yes").wait_for(timeout=(HOST_GRACE_S + 10) * 1000)
+    button(small_viewer, "Yes").click()
+    small_viewer.get_by_text("You are the host.").wait_for(timeout=5000)
+    seen = fit_of(small_viewer)
+    ok("a viewer becoming the host: fitted again, with the host's controls", all_shown(seen), seen)
+    for page in (viewer, roomy, small_viewer):
+        page.context.close()
+
+
+_HAS_FIT = f"const h = window.speakerTime; return h && h.fitting === null && h.entered !== null && ({_HAS_CLOCK})()"
 
 profile_url = ""
 """The page's address, for windows_of_one_browser, popups_of_one_browser and buzzer_held (set by run)."""
