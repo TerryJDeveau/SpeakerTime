@@ -177,6 +177,7 @@ _BOX = "box"              # the Session ID box
 _LIMIT_BOX = "limit_box"  # the Time Limit box (minutes)
 _WARN_BOX = "warn_box"    # the Time Left Warning box (minutes)
 _PICKER = "warn_colours"  # the warning's colour buttons: their trigger, "pick"
+_PICKER_BOX = "warn_colours_box"  # their label and them
 _START_BUTTON = "start"   # the host's Start button, which reads Restart once the timer has run
 _COPY_BUTTON = "copy_link"  # the host's Copy Link button, found by the page's script by this key (Streamlit's class .st-key-copy_link)
 _TOKENS = "tokens"        # the host's token of each session this browser hosted: {sid: token}
@@ -1702,19 +1703,17 @@ _LIMIT_HELP = (
 )
 _WARNING_HELP = (
     "Minutes, to one decimal place, or blank for none. Shown beside the Time Limit on every panel and pop-out. "
-    "While Time Remaining is this many minutes or fewer, and more than zero, it takes the warning's colour. "
-    "The buttons on the right set that colour: the first, A, is green (or, when Time Remaining is in a colour, "
-    "the colour opposite it); the others are four more."
+    "While Time Remaining is this many minutes or fewer, and more than zero, it takes the warning's colour."
+)
+_WARNING_COLOUR_LABEL = "Warning Colour"
+_WARNING_COLOUR_HELP = (
+    "The colour Time Remaining takes while it is within the Time Left Warning, on every panel and pop-out. "
+    "The first button, A, is green (or, when Time Remaining is in a colour, the colour opposite it); the others are four more."
 )
 
 # The warning's colour buttons (``Shown.warning_buttons``), beside its box on the host's page: laid out again at each run.
-_PICKER_HTML = (
-    '<div class="picks-box"><div class="picks-label">Warning colour</div>'
-    '<div class="picks" role="group" aria-label="Colour of the Time Left Warning"></div></div>'
-)
+_PICKER_HTML = '<div class="picks" role="group" aria-label="Colour of the Time Left Warning"></div>'
 _PICKER_CSS = """
-.picks-box { font-family: "Source Sans Pro", "Source Sans 3", system-ui, sans-serif; }
-.picks-label { font-size: 14px; line-height: 1.6; margin-bottom: 0.5rem; }
 .picks { display: flex; align-items: center; gap: 7px; height: 2.5rem; }
 .picks button { width: 22px; height: 22px; padding: 0; border-radius: 50%; cursor: pointer; background: var(--swatch);
   border: 1px solid #9ca3af; font: 600 11px system-ui, sans-serif; color: #000; }
@@ -2243,7 +2242,9 @@ def _host_controls(shown: Shown) -> None:
     )
     buttons, chosen = shown.warning_buttons()
     picker = st.components.v2.component("speakertime_warn_colours", html=_PICKER_HTML, css=_PICKER_CSS, js=_PICKER_JS)
-    with row:
+    # The label is Streamlit's own, for its "?" like the boxes' beside it (Terry, 2026-11-04); at their labels' size (:small).
+    with row.container(gap=None, key=_PICKER_BOX):
+        st.markdown(f":small[{_WARNING_COLOUR_LABEL}]", help=_WARNING_COLOUR_HELP)
         picker(key=_PICKER, data={"buttons": buttons, "chosen": chosen, "auto": AUTO}, on_pick_change=_warning_colour_picked)
     row = st.container(horizontal=True)
     # A button that would do nothing is greyed (ratesplot's rule: grey what has no effect). Start reads Restart once the
