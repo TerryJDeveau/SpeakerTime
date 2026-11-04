@@ -303,8 +303,8 @@ _SILENT_SWITCH = "silent"
 """The word in a page's address that stops its buzzer sounding: ``?silent`` (Terry, 2026-11-03: "-silent or something like that", so ``?-silent`` too)."""
 _SILENT_OFF = {"0", "false", "no", "off"}
 """A value of the switch that says not silent after all (``?silent=no``)."""
-_SILENT_TEXT = "No buzzer sound on this page."
-"""Beside the role on a page whose address says silent, so that its silence is not taken for a fault."""
+_SILENT_TEXT = "(silent)"
+"""After the role on a page whose address says silent, so that its silence is not taken for a fault (Terry, 2026-11-03: this short)."""
 
 _BUZZ_RESEND_MS = round(BUZZ_HOLD_S * 1000 / 3)
 """While the Buzzer is held, the host's page says so again this often: the server stops it after BUZZ_HOLD_S without word."""
@@ -2032,7 +2032,7 @@ def _session_screen(sid: str, checked: Checked) -> None:
     role = checked.role
     who = "You are the host." if role == HOST else "You are viewing it."
     silent = silent_asked(st.query_params)
-    st.markdown(f"Session ID: **{_markdown_text(sid)}**   {who}" + (f" {_SILENT_TEXT}" if silent else ""))
+    st.markdown(f"Session ID: **{_markdown_text(sid)}**   {who}" + (f" {_SILENT_TEXT}" if silent else ""))
     st.fragment(_live, run_every=datetime.timedelta(seconds=CHECK_IN_S))(sid, role)
     clock = st.components.v2.component("speakertime_clock", html=_CLOCK_HTML, css=_CLOCK_CSS, js=_CLOCK_JS)
     data = {"sid": sid, **checked.shown.for_script(), "mode": _mode() or checked.shown.host_mode, "host": role == HOST,
