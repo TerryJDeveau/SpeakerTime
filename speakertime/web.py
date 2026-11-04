@@ -1116,11 +1116,16 @@ const fitted = (h, root) => {{
   const room = main.clientHeight - parseFloat(padding.paddingTop) - parseFloat(padding.paddingBottom) - 1;
   const drawn = root.getBoundingClientRect().height;
   if (room <= 0 || drawn <= 0) return null;
-  const panel = drawn / (h.fitPage * h.fitPanel);
-  const others = (column.getBoundingClientRect().height - drawn) / h.fitPage;
+  // The scales in effect, not those asked for: while the column's rule does not hold yet (_PAGE_STYLE), or its elements
+  // are still arriving, dividing by the scale asked for makes the rest of the page look larger the smaller the scale,
+  // and the page falls to FIT_LEAST in a few draws.
+  const zoomed = (element) => parseFloat(getComputedStyle(element).zoom) || 1;
+  const pageNow = zoomed(column), panelNow = zoomed(root);
+  const panel = drawn / (pageNow * panelNow);
+  const others = (column.getBoundingClientRect().height - drawn) / pageNow;
   const scroll = root.parentElement;
   if (scroll.scrollWidth > scroll.clientWidth) {{
-    h.fitting.widest = Math.min(h.fitting.widest, h.fitPage * h.fitPanel * scroll.clientWidth / scroll.scrollWidth);
+    h.fitting.widest = Math.min(h.fitting.widest, pageNow * panelNow * scroll.clientWidth / scroll.scrollWidth);
   }}
   let page = 1;
   let scale = (room - others) / panel;
@@ -1149,10 +1154,13 @@ const fit = (h, root) => {{
   }}
   if (document.querySelector('[data-testid="stApp"]')?.getAttribute("data-test-script-state") === "running") return;
   const want = fitted(h, root);
-  if (want === null) return;
-  const smaller = want.page < h.fitPage - 0.001 || want.panel < h.fitPanel - 0.001;
-  const larger = now - f.at < FIT_GROW_MS && (want.page > h.fitPage + 0.01 || want.panel > h.fitPanel + 0.01);
-  if (smaller || larger) {{
+  if (want === null) {{
+    // No window yet (Community Cloud keeps the app's frame hidden, at no size, while the page loads): the fit's time
+    // starts when there is one.
+    f.at = f.changed = now;
+    return;
+  }}
+  const apply = () => {{
     h.fitPage = want.page;
     h.fitPanel = want.panel;
     document.documentElement.style.setProperty("--speakertime-page", String(want.page));
