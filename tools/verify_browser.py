@@ -1672,8 +1672,30 @@ def frame_minimum_and_recovery(browser, errors: list[str]) -> None:
     ok("a window of almost no height: neither scale below 0.2", seen["page"] >= 0.2 and seen["panel"] >= 0.2, seen)
     tiny.context.close()
 
+    # A window where the column's scale changes how the text wraps: at 1 the host's page needs 0.565, and at 0.565 it
+    # measures as if 1 would fit. It must settle, inside the window, whatever the timing (it flipped until the fit's time
+    # ran out, passing or failing by chance): so several pages, and how many times each changed its scales.
+    counting = """() => { const before = () => window.speakerTime?.fitPage; let last = before(); window.__flips = 0;
+      setInterval(() => { const now = before(); if (now !== last) { last = now; window.__flips += 1; } }, 20); }"""
+    for attempt in range(1, 5):
+        context = sized(390, 750)
+        page = context.new_page()
+        page.on("pageerror", lambda error: errors.append(f"frame, phone: {error}"))
+        page.goto(profile_url)
+        page.locator('[data-testid="stApp"]').wait_for()
+        page.wait_for_timeout(1500)
+        id_box(page).fill(f"PHONE{attempt}")
+        page.evaluate(counting)
+        button(page, "Create New Session").click()
+        page.get_by_text("You are the host.").wait_for(timeout=8000)
+        seen = fit_of(page)
+        flips = page.evaluate("window.__flips")
+        ok(f"the host's page at 390 by 750 (try {attempt}): settled inside the window, its scale changing only a few times",
+           seen["inside"] and not seen["bars"] and flips <= 6, [flips, seen])
+        context.close()
+
     # A fit forced to be past its time for rising (3 s), as a page arriving slowly may be.
-    force = "(ago) => { const at = performance.now(); window.speakerTime.fitting = { at: at - ago, changed: at, widest: 1 }; }"
+    force = "(ago) => { const at = performance.now(); window.speakerTime.fitting = { at: at - ago, changed: at, widest: 1, most: 1, rose: false }; }"
     column = '[data-testid="stMainBlockContainer"] > [data-testid="stVerticalBlock"]'
     before = fit_of(small)
     small.evaluate(f"""() => {{ const s = document.createElement('style'); s.id = 'nozoom'; s.textContent = '{column} {{ zoom: 1 !important; }}'; document.head.appendChild(s); }}""")
