@@ -653,7 +653,7 @@ const hub = () => (window.speakerTime ??= {{
   host: null,       // whether this page hosts the session (the clock's data); null until the clock has said
   silent: false,    // this page's address says it makes no sound (the clock's data, silent_asked)
   entered: null,    // the clock's data's count of sessions entered, as last seen
-  fitting: null,    // while the page is being fitted to its window: {{ at, changed, widest }} (_CLOCK_JS, fit)
+  fitting: null,    // while the page is being fitted to its window: fitStart's (_CLOCK_JS, fit)
   fitPage: 1,       // the page's column's scale
   fitPanel: 1,      // the panel's own scale, within that
   listening: false, // the page's own listeners for the Buzzer are added (_CLOCK_JS, listen)
@@ -1243,11 +1243,12 @@ const fitted = (h, root) => {{
   if (scroll.scrollWidth > scroll.clientWidth) {{
     h.fitting.widest = Math.min(h.fitting.widest, pageNow * panelNow * scroll.clientWidth / scroll.scrollWidth);
   }}
-  let page = 1;
-  let scale = (room - others) / panel;
+  const most = h.fitting.most;  // the highest the column's scale may go (fit)
+  let page = most;
+  let scale = (room - others * page) / (page * panel);
   const least = Math.min(FIT_SHARE * room, FIT_PANEL_PX, panel);  // the panel's height as drawn, in a small window
-  if (scale < 1 && scale * panel < least) {{
-    page = Math.max(FIT_LEAST, Math.min(1, (room - least) / others));
+  if (scale * page < 1 && scale * page * panel < least) {{
+    page = Math.max(FIT_LEAST, Math.min(most, (room - least) / others));
     scale = least / (page * panel);
   }}
   const down = (value) => Math.floor(value * 1000) / 1000;
@@ -1255,6 +1256,10 @@ const fitted = (h, root) => {{
   // limits the panel is its size as drawn, never above its full size (widest starts at 1) or wider than its place.
   return {{ page: down(page), panel: down(Math.max(FIT_LEAST, Math.min(scale, h.fitting.widest / page))) }};
 }};
+
+// A fit's state, begun now: when it began and last changed; how wide the panel may be; the most the column's scale may
+// go, and whether it has risen yet.
+const fitStart = (now) => ({{ at: now, changed: now, widest: 1, most: 1, rose: false }});
 
 // Fits the page to its window after it connects to a session, as its elements
 // arrive: run at every draw until the scales settle, and not again until the
@@ -1278,22 +1283,25 @@ const fit = (h, root) => {{
     f.at = f.changed = now;
     return;
   }}
-  const apply = () => {{
+  // The column's scale changes how its text wraps, so a scale's measure says little about a higher one: at phone widths the
+  // host's page measured at 0.565 as if 1 would fit, and at 1 as needing 0.565, flipping at every draw until the fit's
+  // time ran out, wherever that left it (2026-11-04, 66 to 304 px past the window). So a rise that did not fit sets the
+  // most the column's scale may go; at that scale the panel takes the room there is. After FIT_GROW_MS it only falls.
+  const falling = want.page < h.fitPage - 0.001, rising = want.page > h.fitPage + 0.01;
+  if (falling && f.rose) f.most = want.page;
+  const late = now - f.at >= FIT_GROW_MS;
+  if (late) f.most = Math.min(f.most, falling ? want.page : h.fitPage);
+  if (falling || want.panel < h.fitPanel - 0.001 || (!late && (rising || want.panel > h.fitPanel + 0.01))) {{
+    if (rising) f.rose = true;
     h.fitPage = want.page;
     h.fitPanel = want.panel;
     document.documentElement.style.setProperty("--speakertime-page", String(want.page));
     document.documentElement.style.setProperty("--speakertime-panel", String(want.panel));
     f.changed = now;
-  }};
-  const smaller = want.page < h.fitPage - 0.001 || want.panel < h.fitPanel - 0.001;
-  const larger = want.page > h.fitPage + 0.01 || want.panel > h.fitPanel + 0.01;
-  if (smaller || (larger && now - f.at < FIT_GROW_MS)) {{
-    apply();
   }} else if (now - f.changed > FIT_SETTLED_MS) {{
-    // A last look, the page having settled, may still raise them once: what was measured while it arrived was not
-    // the page. Seen once, 2026-11-04: a page left at the smallest scale that a reload fitted at 1 and 0.609.
-    if (larger) apply();
-    h.fitting = null;
+    // Settled at the floor: fitted once more, what was measured while the page arrived not having been the page.
+    // Seen once, 2026-11-04: a page left at the floor that a reload fitted at 1 and 0.609.
+    h.fitting = !f.looked && h.fitPage <= FIT_LEAST + 0.001 ? {{ ...fitStart(now), looked: true }} : null;
   }}
 }};
 
@@ -1524,8 +1532,7 @@ export default function (component) {{
   h.silent = data.silent === true;
   if (h.entered !== data.entered) {{
     h.entered = data.entered;
-    const at = performance.now();
-    h.fitting = {{ at, changed: at, widest: 1 }};
+    h.fitting = fitStart(performance.now());
     h.dayNight = null;  // read again: Leave Session may have forgotten it
   }}
   root.classList.toggle("host", data.host);
