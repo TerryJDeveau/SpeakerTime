@@ -1227,10 +1227,10 @@ _LINE_SEEN = """() => {
   const state = (s) => q(s).hidden ? null : [q(s).textContent, q(s).disabled];
   const boxes = [...document.querySelectorAll('.modes, .bar > button')].filter(e => !e.hidden).map(e => e.getBoundingClientRect());
   const middles = boxes.map(b => (b.top + b.bottom) / 2), bar = q('.bar').getBoundingClientRect();
-  return { modes: [...document.querySelectorAll('.modes button')].map(b => b.textContent), buzz: state('.buzz'),
+  return { modes: [...document.querySelectorAll('.modes button')].map(b => b.textContent), buzz: state('button.buzz'),
            start: state('[data-a="start"]'), stop: state('[data-a="stop"]'), reset: state('[data-a="reset"]'),
            daynight: !q('.daynight').hidden,
-           held: q('.buzz').classList.contains('on'), oneRow: Math.max(...middles) - Math.min(...middles) <= 2,
+           held: q('button.buzz').classList.contains('on'), oneRow: Math.max(...middles) - Math.min(...middles) <= 2,
            inside: bar.left >= -0.5 && bar.top >= -0.5 && bar.right <= innerWidth + 0.5 && bar.bottom <= innerHeight + 0.5 };
 }"""
 _FULL_MODES = ["H:MM:SS", "MMM.M"]
@@ -1306,7 +1306,7 @@ def host_line_in_popout(browser, errors: list[str], shot) -> None:
         return on_clock(page, _BUZZ_SEEN)["sounding"]
 
     # The Buzzer: held in the pop-out, the page behind it having lost the focus to it.
-    box = pip.locator(".buzz").bounding_box()
+    box = pip.locator("button.buzz").bounding_box()
     pip.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
     pip.mouse.down()
     ok("Buzz held in the pop-out: shown held, BUZZ everywhere within 2.5 s", settled(everywhere, ["BUZZ"] * 3, 2.5) == ["BUZZ"] * 3 and line("held") is True, everywhere())
@@ -1323,13 +1323,13 @@ def host_line_in_popout(browser, errors: list[str], shot) -> None:
     ok("let go in the pop-out: the button shows it, and the host's page's sound stops at once", seen == [False, False], seen)
     seen = settled(lambda: [t != "BUZZ" for t in everywhere()] + [sounding(viewer)], [True, True, True, False], 2.5)
     ok("and the time again everywhere within 2.5 s, the viewer's sound stopped", seen == [True, True, True, False], [everywhere(), seen])
-    pip.locator(".buzz").focus()
+    pip.locator("button.buzz").focus()
     pip.keyboard.down("Space")
     ok("held by Space in the pop-out: BUZZ at the viewer's", settled(lambda: clock(viewer)["remaining"], "BUZZ", 2.5) == "BUZZ", clock(viewer))
     pip.keyboard.up("Space")
     ok("Space let go: the time again", settled(lambda: clock(viewer)["remaining"] != "BUZZ", True, 2.5) is True, clock(viewer))
     # The pop-out closed with the button down: let go, as with the host's page closed.
-    box = pip.locator(".buzz").bounding_box()
+    box = pip.locator("button.buzz").bounding_box()
     pip.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
     pip.mouse.down()
     settled(lambda: clock(viewer)["remaining"], "BUZZ", 2.5)
@@ -1980,7 +1980,10 @@ def button_colours(browser, errors: list[str], shot) -> None:
         box = target.bounding_box()
         page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
         page.mouse.down()
-        seen = settled(lambda: paint(target), want, 2.0)
+        settled(lambda: paint(target), want, 2.0)
+        # Still so once Time Remaining reads BUZZ (a check-in later): in a pop-out it took the button's mark until v1.19.
+        page.wait_for_timeout(1500)
+        seen = paint(target)
         page.mouse.up()
         page.mouse.move(0, 0)
         return seen
@@ -1990,8 +1993,8 @@ def button_colours(browser, errors: list[str], shot) -> None:
         if name == "Day":
             on_clock(host, _SWATCH, ["elapsed", "black"])
             settled(lambda: paint(host.locator(".buzzer"))[1], rgb(panel))
-            settled(lambda: paint(pip.locator(".buzz"))[1], rgb(panel))
-        for where, page, target in (("the page", host, host.locator(".buzzer")), ("its window", pip, pip.locator(".buzz"))):
+            settled(lambda: paint(pip.locator("button.buzz"))[1], rgb(panel))
+        for where, page, target in (("the page", host, host.locator(".buzzer")), ("its window", pip, pip.locator("button.buzz"))):
             seen = look(target)
             ok(f"{name}, on {where}: Buzz, bold red on the panel's background", (seen["text"], seen["color"], seen["background"], seen["weight"])
                == ("Buzz", rgb(red), rgb(panel), "700"), seen)
