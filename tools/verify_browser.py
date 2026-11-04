@@ -8,8 +8,8 @@ window, the pop-ups offered while another tab of the browser has it, a
 tab holding an earlier version's state, the host's Buzzer, the page fitted
 to its window on connecting, the host's line in a pop-out or pop-up, a
 link that connects by itself, a viewer's Day and Night, the host's row with Copy
-Link, the frame's minimum in a small window, and a viewer's Yes with check-ins
-waiting.
+Link, the frame's minimum in a small window, a viewer's Yes with check-ins
+waiting, and a box cleared.
 Prints each check and exits 1 on any failure.
 
 Needs Playwright (``pip install playwright``) and a Chromium: ``--chrome``
@@ -420,6 +420,7 @@ def run(url: str, launch: dict, shots: Path | None) -> None:
         host_row_and_link(browser, errors, shot)
         frame_minimum_and_recovery(browser, errors)
         yes_with_check_ins_waiting(browser, errors)
+        box_cleared(browser, errors)
 
         ok("no script errors on any page", not errors, errors)
         browser.close()
@@ -1856,6 +1857,41 @@ def yes_with_check_ins_waiting(browser, errors: list[str]) -> None:
            after == before == ("2:18", "1:00") and boxes == ("2.3", "1.0"), [before, after, boxes])
         for context in contexts:
             context.close()
+
+
+def box_cleared(browser, errors: list[str]) -> None:
+    """28. A Time Limit or warning box cleared stays blank, its hint showing, and stays so through a reload; 0 typed shows as 0.0; either way, no limit (Terry, 2026-11-04: it filled back with 0.0)."""
+    page = browser.new_context(viewport={"width": 800, "height": 1500}).new_page()
+    page.on("pageerror", lambda error: errors.append(f"cleared: {error}"))
+    page.goto(profile_url)
+    page.locator('[data-testid="stApp"]').wait_for()
+    page.wait_for_timeout(1500)
+    id_box(page).fill("CLEARED")
+    button(page, "Create New Session").click()
+    page.get_by_text("You are the host.").wait_for(timeout=8000)
+    warning = page.get_by_role("spinbutton", name="Time Left Warning (minutes)")
+
+    def enter(box, text: str) -> None:
+        box.fill(text)
+        box.press("Enter")
+        page.wait_for_timeout(1500)
+
+    enter(limit_box(page), "5")
+    enter(warning, "1")
+    ok("both set: 5:00 on the panel", (clock(page)["limit"], limit_box(page).input_value(), warning.input_value()) == ("5:00", "5.0", "1.0"), clock(page))
+    enter(limit_box(page), "")
+    enter(warning, "")
+    seen = (clock(page)["limit"], limit_box(page).input_value(), warning.input_value())
+    ok("both cleared: blank, no limit on the panel", seen == ("none", "", ""), seen)
+    page.reload()
+    page.get_by_text("You are the host.").wait_for(timeout=8000)
+    page.wait_for_timeout(1500)
+    seen = (clock(page)["limit"], limit_box(page).input_value(), warning.input_value())
+    ok("still blank after a reload", seen == ("none", "", ""), seen)
+    enter(limit_box(page), "0")
+    seen = (clock(page)["limit"], limit_box(page).input_value())
+    ok("0 typed: shown as 0.0, no limit on the panel", seen == ("none", "0.0"), seen)
+    page.context.close()
 
 
 profile_url = ""

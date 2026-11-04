@@ -105,6 +105,11 @@ def main() -> int:
     a.run()
     check("each box takes the session's value at every laying out",
           (a.number_input(key=web._LIMIT_BOX).value, a.number_input(key=web._WARN_BOX).value), (3.0, 1.0))
+    a.number_input(key=web._LIMIT_BOX).set_value(None).run()
+    a.number_input(key=web._WARN_BOX).set_value(None).run()
+    shown = REGISTRY.shown(sid)
+    check("each box cleared stays blank, and the session has none",
+          (a.number_input(key=web._LIMIT_BOX).value, a.number_input(key=web._WARN_BOX).value, shown.limit, shown.warning), (None, None, None, None))
     REGISTRY._sessions[sid].timer.limit = 2.3
     REGISTRY._sessions[sid].warning = 0.6
     a.run()
