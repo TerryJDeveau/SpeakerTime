@@ -35,7 +35,7 @@ no scroll bar. In a small window the panel keeps two thirds of the height, up to
 250 pixels as drawn (v1.16: its minimum doubled), and the whole page's column
 shrinks as well, though not so far that all of it stays inside: the text and
 controls stand half as large again as that would leave them, up to their full
-size, and the page scrolls to reach the rest, starting at its top (v1.17). After
+size, and the page scrolls to reach the rest (v1.17). After
 that the scale stays as it is: moving a slider or resizing the window does not
 change it, and a reload fits the page again.
 
@@ -72,8 +72,8 @@ timer stays as it was. A page and its pop-out share one choice. It is kept for
 that session in a cookie, so a reload keeps it and another session starts from
 the default; **Leave Session** forgets it. It stays in the viewer's browser and
 changes nothing for anyone else. The two buttons keep their own colours whichever
-is on, Day black on white and Night white on black; the one on is underlined
-(v1.17).
+is on, Day black on white and Night white on black (v1.17), with no mark on the
+one on: the panel's own background says which it is (v1.19).
 
 **Time Left Warning**: to the right of the Time Limit box, in minutes (blank
 for none). Once set, it shows beside the Time Limit on every panel and
