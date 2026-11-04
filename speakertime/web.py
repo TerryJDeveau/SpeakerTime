@@ -59,6 +59,14 @@ sound only once it has been clicked or a key pressed on it since it loaded,
 so a viewer's page that reconnected by itself (a reload) says so under its
 clock until it is clicked; the host's press of the button is itself a click.
 
+Fitted to the window on connecting (Terry, 2026-11-03)
+------------------------------------------------------
+When a page enters a session (``_enter``: a new count in the clock's data),
+its script scales it so that all of it is inside the tab's window, down only
+(``_FIT_SHARE``, ``fit``). The panel shrinks first and the text around it keeps
+its size; in a window too short for that the page's column shrinks as well.
+After that the sliders and the window are the user's.
+
 What the browser keeps
 ----------------------
 Three cookies and three notes per tab:
@@ -174,6 +182,7 @@ _EPOCH = "epoch"          # the session's host_epoch when this panel last took t
 _CLOCK = "clock"          # the clock element: its triggers, "mode" (the switch) and "size" (a slider)
 _LOST = "lost"            # the check-in's script found the clock gone from the page: lay the page out again
 _SYNC = "sync"            # the check-in's element: its triggers, "tick" (the pop-out's), "lost" and "buzz" (the host's Buzzer)
+_ENTERED = "entered"      # the times this page has entered a session (_enter): a new count has the page's script fit the page to its window
 
 # The clock's look. A dark panel with light figures reads well from a lectern
 # and in a small window beside the slides; the host may turn it white with
@@ -235,6 +244,26 @@ _PHONE_PX = 640
 """In a window narrower than this, the panel is no wider than the page and the figures shrink to fit it, as before v1.11: a phone's page is not scrolled sideways."""
 _ROOM_TEXT = "00:00"
 """The figures keep room for this text however short they are, so the panel does not narrow when "10:00" becomes "9:59"."""
+
+# v1.13 (Terry, 2026-11-03): on connecting to a session, as host or viewer, no part of the app is outside the browser
+# tab's window, the text around the panel and the cookie note included; scaled down if need be, never up. Measured on
+# v1.12: the host's page at the default sizes is 1026 px high, its panel 510 of them, in a window of 784. So the panel is
+# scaled first (CSS zoom, which unlike a transform gives back the room it saves), and the text around it keeps its size.
+# Only where that would leave the panel too little of the window (the rest of the host's page alone is about 430 px) is
+# the page's whole column scaled as well (a viewer's page in a window of 500 by 400). The two scales are CSS variables on
+# the document, so that a run of the page, which may rebuild the elements, leaves them; the column's rule (_PAGE_STYLE)
+# holds only while the clock is on the page, so that the start screen stays at full size. After that the sliders and
+# the window are the user's: a panel made wider than the window runs past its edge, with its scroll bar (v1.11).
+_FIT_SHARE = 1 / 3
+"""The panel alone shrinks until it would have less than this share of the window's height; below that, the whole column does too."""
+_FIT_LEAST = 0.1
+"""The smallest either scale goes: a window of almost no height shows the page unreadably small as it is, and browsers keep a smallest font."""
+_FIT_GROW_MS = 3000
+"""For this long after connecting the scales may rise again as well as fall: elements on their way out may have been measured."""
+_FIT_SETTLED_MS = 1500
+"""The fit ends once the scales have not changed for this long: late elements (the number boxes, a font) have come by then."""
+_FIT_LONGEST_MS = 10000
+"""The fit ends after this long whatever happens, should a line of text wrapping at one scale and not at the next keep it moving."""
 
 # v1.11 (Terry, 2026-11-03): the pop-out and the pop-up show the panel's
 # figures, Time Limit and switch at the panel's own sizes, scaled as a
@@ -548,6 +577,10 @@ const hub = () => (window.speakerTime ??= {{
   preview: {{}},     // the host's slider while dragged, before the size comes back from the server
   host: null,       // whether this page hosts the session (the clock's data); null until the clock has said
   silent: false,    // this page's address says it makes no sound (the clock's data, silent_asked)
+  entered: null,    // the clock's data's count of sessions entered, as last seen
+  fitting: null,    // while the page is being fitted to its window: {{ at, changed, widest }} (_CLOCK_JS, fit)
+  fitPage: 1,       // the page's column's scale
+  fitPanel: 1,      // the panel's own scale, within that
   listening: false, // the page's own listeners for the Buzzer are added (_CLOCK_JS, listen)
   buzzHeld: false,  // the host's Buzzer is held on this page
   buzzBy: null,     // held by "pointer" or "key"
@@ -849,6 +882,7 @@ _CLOCK_CSS = f"""
 .scroll {{ overflow-x: auto; overflow-y: hidden; }}
 .clock {{
   {_LOOK_CSS}
+  zoom: var(--speakertime-panel, 1);
   border-radius: 14px; padding: 14px {_PANEL_PAD_PX}px 12px; box-shadow: inset 0 0 0 1px var(--line);
   box-sizing: border-box; width: max-content; min-width: min(100%, {_PANEL_MIN_PX}px); margin: 0 auto;
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
@@ -967,6 +1001,11 @@ const POPUP_FEATURES = {json.dumps(_POPUP_FEATURES)};
 const PIP_SIZE = {{ width: 340, height: 280 }};
 const BUZZ_RESEND_MS = {_BUZZ_RESEND_MS};
 const BUZZ_CHECK_MS = {_BUZZ_CHECK_MS};
+const FIT_SHARE = {_FIT_SHARE};
+const FIT_LEAST = {_FIT_LEAST};
+const FIT_GROW_MS = {_FIT_GROW_MS};
+const FIT_SETTLED_MS = {_FIT_SETTLED_MS};
+const FIT_LONGEST_MS = {_FIT_LONGEST_MS};
 
 // The Document Picture-in-Picture API of the top window: a pop-out may be
 // opened only from a top-level page (Chrome: "only allowed from a top-level
@@ -999,12 +1038,74 @@ const lookElsewhere = (h) => {{
   }}, () => {{}});
 }};
 
+// The scales that fit the page to its window (_FIT_SHARE), worked out from the
+// page as it stands at the scales it has: the panel as it would be unscaled,
+// and the rest of the column at the column's scale alone. The column's padding
+// is outside its scale, so that the title stays clear of Streamlit's top bar.
+// A panel still wider than its place sets the most the two may come to.
+// Null while the page cannot say.
+const fitted = (h, root) => {{
+  const main = document.querySelector('[data-testid="stMain"]');
+  const outer = document.querySelector('[data-testid="stMainBlockContainer"]');
+  const column = outer?.querySelector(':scope > [data-testid="stVerticalBlock"]');
+  if (!main || !column) return null;
+  const padding = getComputedStyle(outer);
+  const room = main.clientHeight - parseFloat(padding.paddingTop) - parseFloat(padding.paddingBottom) - 1;
+  const drawn = root.getBoundingClientRect().height;
+  if (room <= 0 || drawn <= 0) return null;
+  const panel = drawn / (h.fitPage * h.fitPanel);
+  const others = (column.getBoundingClientRect().height - drawn) / h.fitPage;
+  const scroll = root.parentElement;
+  if (scroll.scrollWidth > scroll.clientWidth) {{
+    h.fitting.widest = Math.min(h.fitting.widest, h.fitPage * h.fitPanel * scroll.clientWidth / scroll.scrollWidth);
+  }}
+  let page = 1;
+  let scale = (room - others) / panel;
+  if (scale < 1 && scale * panel < FIT_SHARE * room) {{
+    page = Math.max(FIT_LEAST, Math.min(1, (1 - FIT_SHARE) * room / others));
+    scale = FIT_SHARE * room / (page * panel);
+  }}
+  const down = (value) => Math.floor(value * 1000) / 1000;
+  return {{ page: down(page), panel: down(Math.max(FIT_LEAST, Math.min(1, scale, h.fitting.widest / page))) }};
+}};
+
+// Fits the page to its window after it connects to a session, as its elements
+// arrive: run at every draw until the scales settle, and not again until the
+// next session entered, so the window and the sliders are the user's after
+// that. Measured only between runs of the page: during one, the last screen's
+// elements may still be there (Streamlit's own mark, kept for its tests;
+// should it go, the scales would only move about a little more at the start).
+const fit = (h, root) => {{
+  const f = h.fitting;
+  if (f === null) return;
+  const now = performance.now();
+  if (now - f.at > FIT_LONGEST_MS) {{
+    h.fitting = null;
+    return;
+  }}
+  if (document.querySelector('[data-testid="stApp"]')?.getAttribute("data-test-script-state") === "running") return;
+  const want = fitted(h, root);
+  if (want === null) return;
+  const smaller = want.page < h.fitPage - 0.001 || want.panel < h.fitPanel - 0.001;
+  const larger = now - f.at < FIT_GROW_MS && (want.page > h.fitPage + 0.01 || want.panel > h.fitPanel + 0.01);
+  if (smaller || larger) {{
+    h.fitPage = want.page;
+    h.fitPanel = want.panel;
+    document.documentElement.style.setProperty("--speakertime-page", String(want.page));
+    document.documentElement.style.setProperty("--speakertime-panel", String(want.panel));
+    f.changed = now;
+  }} else if (now - f.changed > FIT_SETTLED_MS) {{
+    h.fitting = null;
+  }}
+}};
+
 // The panel as it is now (h.clock, the element last laid out): drawn every
 // DRAW_MS by the page's one timer, with the pop button's label and note.
 const drawPanel = (h) => {{
   const root = h.clock;
   if (root === null || !root.isConnected) return;
   h.draw(root, h.pageMode);
+  fit(h, root);
   lookElsewhere(h);
   if (h.pip !== null && h.pip.closed) h.closed();  // its pagehide missed
   const pop = root.querySelector(".pop");
@@ -1152,6 +1253,11 @@ export default function (component) {{
   h.clock = root;
   h.host = data.host;
   h.silent = data.silent === true;
+  if (h.entered !== data.entered) {{
+    h.entered = data.entered;
+    const at = performance.now();
+    h.fitting = {{ at, changed: at, widest: 1 }};
+  }}
   root.classList.toggle("host", data.host);
   root.querySelector(".buzzer").hidden = !data.host;
   if (!data.host) {{
@@ -1193,6 +1299,7 @@ function wire(h, root) {{
   for (const slider of root.querySelectorAll("input.size")) {{
     const name = slider.dataset.t;
     slider.addEventListener("input", () => {{
+      h.fitting = null;  // the host has taken over the size
       h.preview[name] = Number(slider.value);
       drawPanel(h);
     }});
@@ -1417,6 +1524,8 @@ _PAGE_STYLE = """
 [data-testid="stMainBlockContainer"] > [data-testid="stVerticalBlock"] > :not(.st-key-clock) {
   max-width: 44rem; margin-left: max(0px, calc((100% - 44rem) / 2));
 }
+/* The page's column as fitted to its window on connecting (_FIT_SHARE), only while the clock is on the page. */
+[data-testid="stMainBlockContainer"] > [data-testid="stVerticalBlock"]:has(> .st-key-clock) { zoom: var(--speakertime-page, 1); }
 .speakertime-wait { display: flex; align-items: center; gap: 0.7em; font-size: 1.25rem; margin: 0.5rem 0 0.25rem; }
 .speakertime-spinner {
   width: 1.3em; height: 1.3em; flex: none; border-radius: 50%;
@@ -1554,6 +1663,7 @@ def _enter(sid: str, checked: Checked) -> None:
     state[_SID] = sid
     state[_SCREEN] = checked.role
     state[_BOX] = sid
+    state[_ENTERED] = state.get(_ENTERED, 0) + 1
     state.pop(_REJOIN, None)
     _take_host_mode(checked.shown)
     host = None
@@ -1923,7 +2033,7 @@ def _session_screen(sid: str, checked: Checked) -> None:
     st.fragment(_live, run_every=datetime.timedelta(seconds=CHECK_IN_S))(sid, role)
     clock = st.components.v2.component("speakertime_clock", html=_CLOCK_HTML, css=_CLOCK_CSS, js=_CLOCK_JS)
     data = {"sid": sid, **checked.shown.for_script(), "mode": _mode() or checked.shown.host_mode, "host": role == HOST,
-            "silent": silent}
+            "silent": silent, "entered": st.session_state.get(_ENTERED, 0)}
     clock(key=_CLOCK, data=data, on_mode_change=_mode_changed, on_size_change=_size_changed, on_colour_change=_colour_changed)
     if role == HOST:
         _host_controls(checked.shown)
