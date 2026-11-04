@@ -26,15 +26,16 @@ wider, or scroll. On a phone (a window under 640 pixels wide) the panel stays
 within the page and the figures shrink to fit it, as before.
 
 **Fitted to the window on connecting** (v1.13): when a page connects to a
-session, as host or viewer (a reload counts), it is scaled so that all of it
-is inside the browser tab's window, the text around the panel and the cookie
-note included, with no scroll bar. It is scaled down only, never up. The panel
-shrinks first, buttons and all, and the text around it keeps its size. In a
-small window the panel keeps two thirds of the height, up to 250 pixels as drawn
-(v1.16: its minimum doubled), and the whole page's column shrinks to leave it
-that, so the text around it may get small. After that the scale stays as it is:
-moving a slider or resizing the window does not change it, and a reload fits
-the page again.
+session, as host or viewer (a reload counts), it is scaled to the browser tab's
+window, down only, never up. The panel shrinks first, buttons and all, and the
+text around it keeps its size, so that all of the page is inside the window with
+no scroll bar. In a small window the panel keeps two thirds of the height, up to
+250 pixels as drawn (v1.16: its minimum doubled), and the whole page's column
+shrinks as well, though not so far that all of it stays inside: the text and
+controls stand half as large again as that would leave them, up to their full
+size, and the page scrolls to reach the rest, starting at its top (v1.17). After
+that the scale stays as it is: moving a slider or resizing the window does not
+change it, and a reload fits the page again.
 
 A **pop-out** (and a pop-up) shows the host's panel scaled as a whole to fit
 its window (v1.11): make the window larger or smaller by hand and everything
@@ -68,7 +69,9 @@ of the host's that would force the other of night and day is ignored, and the
 timer stays as it was. A page and its pop-out share one choice. It is kept for
 that session in a cookie, so a reload keeps it and another session starts from
 the default; **Leave Session** forgets it. It stays in the viewer's browser and
-changes nothing for anyone else.
+changes nothing for anyone else. The two buttons keep their own colours whichever
+is on, Day black on white and Night white on black; the one on is underlined
+(v1.17).
 
 **Time Left Warning**: to the right of the Time Limit box, in minutes (blank
 for none). Once set, it shows beside the Time Limit on every panel and
