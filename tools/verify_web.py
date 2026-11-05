@@ -221,7 +221,10 @@ def main() -> int:
 
     # The switch in a page's address that stops its buzzer sounding (v1.13, Terry, 2026-11-03).
     for params, expected in (({}, False), ({"silent": ""}, True), ({"-silent": ""}, True), ({"--SILENT": "1"}, True), ({"silent": "yes"}, True),
-                             ({"silent": "no"}, False), ({"silent": "0"}, False), ({"silent": "False"}, False), ({"sound": ""}, False)):
+                             ({"silent": "no"}, False), ({"silent": "0"}, False), ({"silent": "False"}, False), ({"sound": ""}, False),
+                             # A second ? or a ; for the & (Terry, 2026-11-05), as they arrive: only & divides for a browser.
+                             ({"session": "ROOM5?silent"}, True), ({"silent?session": "ROOM5"}, True), ({"session": "ROOM5;silent"}, True),
+                             ({"session": "ROOM5?-silent"}, True), ({"session": "ROOM5?silent=no"}, False), ({"session": "ROOM5"}, False)):
         check(f"silent_asked({params})", web.silent_asked(params), expected)
     s = AppTest.from_file(str(ROOT / "streamlit_app.py"), default_timeout=30)
     s.query_params["silent"] = "1"  # AppTest loses a blank value after its first run; Streamlit keeps one (verify_browser: ?silent)
@@ -234,7 +237,9 @@ def main() -> int:
     check("a page whose address does not, does not", web._SILENT_TEXT in texts(r), False)
 
     # A link naming a session (v1.15, Terry, 2026-11-03): as Connect to Session, with nothing typed.
-    for params, expected in (({}, None), ({"session": "ROOM5"}, "ROOM5"), ({"-Session": "room 5"}, "room 5"), ({"session": "  "}, None), ({"sound": "x"}, None)):
+    for params, expected in (({}, None), ({"session": "ROOM5"}, "ROOM5"), ({"-Session": "room 5"}, "room 5"), ({"session": "  "}, None), ({"sound": "x"}, None),
+                             ({"session": "ROOM5?silent"}, "ROOM5"), ({"silent?session": "ROOM5"}, "ROOM5"), ({"?session": "ROOM5"}, "ROOM5"),
+                             ({"session": "ROOM5;silent"}, "ROOM5"), ({"session": "?silent"}, None)):
         check(f"session_asked({params})", web.session_asked(params), expected)
 
     def linked(address: dict, heard: dict) -> AppTest:
@@ -250,6 +255,13 @@ def main() -> int:
     button(l1, "Leave Session").click().run()
     check("Leave Session takes the session out of the address, the rest kept",
           ("session" in l1.query_params, "silent" in l1.query_params, l1.session_state[web._SCREEN]), (False, True, "start"))
+    # silent=1: AppTest loses a blank value after its first run (above); verify_browser has ?session=ID?silent itself.
+    l7 = linked({"session": "second?silent=1"}, sent(browser="browserK7"))
+    check("a second ? for the &: that session, not one called SECONDSILENT1, and silent",
+          (l7.session_state[web._SID], "You are viewing it." in texts(l7), web._SILENT_TEXT in texts(l7)), ("SECOND", True, True))
+    button(l7, "Leave Session").click().run()
+    check("Leave Session then: the session out of the address, the switch kept",
+          ("session" in l7.query_params, l7.query_params.get("silent")), (False, ["1"]))
     l2 = linked({"session": "not yet"}, sent(browser="browserK2"))
     check("a link to a session not yet created: waiting for it", "Please wait, connection pending" in texts(l2), True)
     button(l2, "Cancel").click().run()

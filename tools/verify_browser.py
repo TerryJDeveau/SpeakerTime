@@ -9,7 +9,7 @@ tab holding an earlier version's state, the host's Buzzer, the page fitted
 to its window on connecting, the host's line in a pop-out or pop-up, a
 link that connects by itself, a viewer's Day and Night, the host's row with Copy
 Link, the frame's minimum in a small window, a viewer's Yes with check-ins
-waiting, a box cleared, and the buttons' colours.
+waiting, a box cleared, and the buttons' colours, labels and lines.
 Prints each check and exits 1 on any failure.
 
 Needs Playwright (``pip install playwright``) and a Chromium: ``--chrome``
@@ -23,6 +23,7 @@ clock and keeps the cookies.
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import math
 import os
@@ -33,6 +34,7 @@ import tempfile
 import time
 from pathlib import Path
 
+from PIL import Image  # Streamlit needs it, so it is there
 from playwright.sync_api import Page, sync_playwright
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -422,6 +424,7 @@ def run(url: str, launch: dict, shots: Path | None) -> None:
         yes_with_check_ins_waiting(browser, errors)
         box_cleared(browser, errors)
         button_colours(browser, errors, shot)
+        button_labels_and_lines(browser, errors, shot)
 
         ok("no script errors on any page", not errors, errors)
         browser.close()
@@ -1408,6 +1411,29 @@ def join_link(browser, errors: list[str]) -> None:
     ok("and a reload stays on the start screen", "You are viewing it." not in main_text(linked), main_text(linked)[:80])
     linked.context.close()
 
+    # A second ? or a ; for the & (Terry, 2026-11-05): only & divides for a browser, so ?session=X?silent arrives as one
+    # value. Each is read as two switches, not as a session called NOVEMBERSILENT.
+    for address in ("?silent&session=NOVEMBER", "?session=NOVEMBER?silent", "?silent?session=NOVEMBER", "?session=NOVEMBER;silent", "?session=NOVEMBER?-silent"):
+        page = opened(address)
+        page.get_by_text("You are viewing it.").wait_for(timeout=10000)
+        seen = main_text(page)
+        ok(f"{address}: that session, and silent", "Session ID: NOVEMBER" in seen and _SILENT_TEXT in seen, seen[:80])
+        page.context.close()
+    # The ones a browser takes itself: # ends the query, + reads as a space; encoded, as v1.19's Copy Link wrote them: left out as the box leaves them out.
+    for address in ("?session=NOVEMBER#5", "?session=NOV+EMBER", "?session=NOV%26EM%23B%2BER"):
+        page = opened(address)
+        page.get_by_text("You are viewing it.").wait_for(timeout=10000)
+        seen = main_text(page)
+        ok(f"{address}: session NOVEMBER, not silent", "Session ID: NOVEMBER" in seen and _SILENT_TEXT not in seen, seen[:80])
+        page.context.close()
+    linked = opened("?session=NOVEMBER?silent")
+    linked.get_by_text("You are viewing it.").wait_for(timeout=10000)
+    button(linked, "Leave Session").click()
+    button(linked, "Connect to Session").wait_for()
+    settled(lambda: "session=" in linked.url, False, 3.0)
+    ok("Leave Session after ?session=ID?silent: the session out of the address, the switch kept", "session=" not in linked.url and "silent" in linked.url, linked.url)
+    linked.context.close()
+
     # The host's own browser, its host's page open: the link makes a viewer; no second host.
     own = opened("?session=NOVEMBER", host.context)
     own.get_by_text("You are viewing it.").wait_for(timeout=10000)
@@ -1666,19 +1692,19 @@ def host_row_and_link(browser, errors: list[str], shot) -> None:
     seen = settled(lambda: on_clipboard(host), f"{base}/?session=TANGO", 3.0)
     ok("with the clipboard's API refused, the older way copies it", seen == f"{base}/?session=TANGO", seen)
 
-    # An ID with Markdown's and an address's characters: encoded, and the link goes there.
+    # An ID typed with an address's characters: they are left out (Terry, 2026-11-05); the @ kept is encoded, and the link goes there.
     special = created(context, "A&B#1+@")
     special.bring_to_front()
     button(special, "Copy Link").click()
-    want = f"{base}/?session=A%26B%231%2B%40"
+    want = f"{base}/?session=AB1%40"
     seen = settled(lambda: on_clipboard(special), want, 3.0)
-    ok("an ID with & # + @: encoded in the link", seen == want, seen)
+    ok("an ID typed with & # + @: read as AB1@, its @ encoded in the link", seen == want, seen)
     other = browser.new_context(viewport={"width": 800, "height": 1000})
     viewer = other.new_page()
     viewer.on("pageerror", lambda error: errors.append(f"copy link, viewer: {error}"))
     viewer.goto(want)
     viewer.get_by_text("You are viewing it.").wait_for(timeout=10000)
-    ok("and that link connects to that session", "A&B#1+@" in main_text(viewer), main_text(viewer)[:120])
+    ok("and that link connects to that session", "AB1@" in main_text(viewer), main_text(viewer)[:120])
     ok("a viewer has Leave Session and no Copy Link", button(viewer, "Leave Session").count() == 1 and button(viewer, "Copy Link").count() == 0)
     other.close()
     context.close()
@@ -1898,13 +1924,13 @@ def box_cleared(browser, errors: list[str]) -> None:
 
 _BUTTON_LOOK = """(e) => {
   const own = getComputedStyle(e), text = getComputedStyle(e.querySelector('p') ?? e);
-  return { text: e.textContent.trim(), color: text.color, background: own.backgroundColor, weight: text.fontWeight, disabled: e.disabled };
+  return { text: e.textContent.trim(), color: text.color, background: own.backgroundColor, weight: text.fontWeight, disabled: e.disabled, opacity: own.opacity };
 }"""
 _NO_BACKGROUND = "rgba(0, 0, 0, 0)"
 
 
 def button_colours(browser, errors: list[str], shot) -> None:
-    """29. Leave Session black on orange; Start, Restart and Stop black on red while they would do something, greyed otherwise, on the page and the host's line in a pop-out or pop-up; Buzz bold red on the panel's own background, Night or Day, the two swapped while held (Terry, 2026-11-04)."""
+    """29. Leave Session black on orange; Start, Restart and Stop white on red while they would do something (Terry, 2026-11-05; black until then), greyed otherwise, on the page and the host's line in a pop-out or pop-up; Buzz bold red on the panel's own background, Night or Day, the two swapped while held (Terry, 2026-11-04)."""
     def connected(context, sid: str, create: bool) -> Page:
         page = context.new_page()
         page.on("pageerror", lambda error: errors.append(f"buttons: {error}"))
@@ -1925,10 +1951,11 @@ def button_colours(browser, errors: list[str], shot) -> None:
         return seen["color"], seen["background"]
 
     def greyed(target) -> bool:
+        # Streamlit's grey on the page; on the line in its window, the panel's text colour (white at Night) at 0.35 opacity.
         seen = look(target)
-        return seen["disabled"] and seen["background"] == _NO_BACKGROUND and seen["color"] != rgb("#000000")
+        return seen["disabled"] and seen["background"] == _NO_BACKGROUND and (seen["color"] != rgb("#ffffff") or float(seen["opacity"]) < 1)
 
-    black_on_red = (rgb("#000000"), rgb("#ff4b4b"))
+    white_on_red = (rgb("#ffffff"), rgb("#ff4b4b"))
     black_on_orange = (rgb("#000000"), rgb(CLOCK_COLOURS["orange"]))
     size = {"width": 800, "height": 1300}
     contexts = [browser.new_context(viewport=size) for _ in range(2)]
@@ -1952,29 +1979,29 @@ def button_colours(browser, errors: list[str], shot) -> None:
         return pip.locator(f'[data-a="{action}"]')
 
     shot(host, "16-buttons-stopped.png")
-    ok("stopped at zero: Start black on red, Stop greyed, on the page", paint(button(host, "Start")) == black_on_red and greyed(button(host, "Stop")),
+    ok("stopped at zero: Start white on red, Stop greyed, on the page", paint(button(host, "Start")) == white_on_red and greyed(button(host, "Stop")),
        [look(button(host, "Start")), look(button(host, "Stop"))])
-    ok("and on the host's line in its window", paint(line("start")) == black_on_red and greyed(line("stop")), [look(line("start")), look(line("stop"))])
+    ok("and on the host's line in its window", paint(line("start")) == white_on_red and greyed(line("stop")), [look(line("start")), look(line("stop"))])
     button(host, "Start").click()
     settled(lambda: button(host, "Restart").is_disabled(), True)
     settled(lambda: line("stop").is_disabled(), False)
     stop = button(host, "Stop")
-    ok("running: Restart greyed, Stop black on red, on the page", greyed(button(host, "Restart")) and paint(stop) == black_on_red,
+    ok("running: Restart greyed, Stop white on red, on the page", greyed(button(host, "Restart")) and paint(stop) == white_on_red,
        [look(button(host, "Restart")), look(stop)])
-    ok("and on the host's line in its window", greyed(line("start")) and paint(line("stop")) == black_on_red, [look(line("start")), look(line("stop"))])
+    ok("and on the host's line in its window", greyed(line("start")) and paint(line("stop")) == white_on_red, [look(line("start")), look(line("stop"))])
     stop.hover()
     hovered = paint(stop)
     stop.focus()
-    ok("Stop stays black on red with the pointer on it, or the focus", (hovered, paint(stop)) == (black_on_red, black_on_red), [hovered, paint(stop)])
+    ok("Stop stays white on red with the pointer on it, or the focus", (hovered, paint(stop)) == (white_on_red, white_on_red), [hovered, paint(stop)])
     host.mouse.move(0, 0)
     shot(host, "17-buttons-running.png")
     shot(pip, "18-buttons-running-line.png")
     stop.click()
     settled(lambda: button(host, "Restart").is_disabled(), False)
     settled(lambda: line("start").is_disabled(), False)
-    ok("stopped part way: Restart black on red, Stop greyed, on the page", paint(button(host, "Restart")) == black_on_red and greyed(button(host, "Stop")),
+    ok("stopped part way: Restart white on red, Stop greyed, on the page", paint(button(host, "Restart")) == white_on_red and greyed(button(host, "Stop")),
        [look(button(host, "Restart")), look(button(host, "Stop"))])
-    ok("and on the host's line in its window", paint(line("start")) == black_on_red and greyed(line("stop")), [look(line("start")), look(line("stop"))])
+    ok("and on the host's line in its window", paint(line("start")) == white_on_red and greyed(line("stop")), [look(line("start")), look(line("stop"))])
 
     def held(page: Page, target, want: tuple[str, str]) -> tuple[str, str]:
         box = target.bounding_box()
@@ -2003,6 +2030,106 @@ def button_colours(browser, errors: list[str], shot) -> None:
             ok(f"{name}, on {where}: the two swapped while held, back when let go", seen == want
                and settled(lambda: paint(target), (rgb(red), rgb(panel)), 2.0) == (rgb(red), rgb(panel)), seen)
     for context in contexts:
+        context.close()
+
+
+# Every button a screen has, through the component's shadow root too: its label's weight, and the line around it (or
+# around the pair it stands in) with the scales of the zoom it sits under taken off.
+_BUTTONS_SEEN = """() => {
+  const all = [];
+  const walk = (root) => {
+    for (const e of root.querySelectorAll('*')) {
+      if (e.tagName === 'BUTTON' && e.closest('[data-testid="stButton"], .tools, .bar')) all.push(e);
+      if (e.shadowRoot) walk(e.shadowRoot);
+    }
+  };
+  walk(document);
+  return all.map((e) => {
+    const text = e.querySelector('p') ?? e;
+    const edged = e.closest('.modes, .daynight') ?? e;
+    return { label: e.textContent.trim(), weight: getComputedStyle(text).fontWeight, border: parseFloat(getComputedStyle(edged).borderTopWidth) };
+  }).filter((b) => b.label);
+}"""
+
+
+def _red_run(page: Page, box: dict) -> int:
+    """How many pixels of Buzz's red line are drawn across its left edge at half its height, read from a screenshot."""
+    y, x0 = box["y"] + box["height"] / 2, max(0, int(box["x"]) - 3)
+    image = Image.open(io.BytesIO(page.screenshot(clip={"x": x0, "y": y, "width": 12, "height": 1}))).convert("RGB")
+    row = [image.getpixel((i, 0)) for i in range(image.width)]
+    red = [c[0] > 120 and c[1] < 90 for c in row]
+    start = red.index(True) if True in red else len(red)
+    run = 0
+    while start + run < len(red) and red[start + run]:
+        run += 1
+    return run
+
+
+def button_labels_and_lines(browser, errors: list[str], shot) -> None:
+    """30. Every button's label bold and the line around it 2 px as drawn, on every screen, the pop-out's line and a page fitted to its window (Terry, 2026-11-05: "A bit hard to see at times")."""
+    def connected(context, sid: str, create: bool) -> Page:
+        page = context.new_page()
+        page.on("pageerror", lambda error: errors.append(f"labels: {error}"))
+        page.goto(profile_url)
+        page.locator('[data-testid="stApp"]').wait_for()
+        page.wait_for_timeout(1500)
+        id_box(page).fill(sid)
+        button(page, "Create New Session" if create else "Connect to Session").click()
+        page.get_by_text("You are the host." if create else "You are viewing it.").wait_for(timeout=8000)
+        page.wait_for_timeout(800)
+        return page
+
+    def all_bold(seen: list[dict]) -> bool:
+        return bool(seen) and all(b["weight"] == "700" for b in seen)
+
+    def scales(page: Page) -> tuple[float, float]:
+        read = page.evaluate("""() => { const s = getComputedStyle(document.documentElement);
+          return [s.getPropertyValue('--speakertime-page'), s.getPropertyValue('--speakertime-panel')]; }""")
+        return float(read[0] or 1), float(read[1] or 1)
+
+    contexts = [browser.new_context(viewport={"width": 1000, "height": 1300}) for _ in range(2)]
+    start = contexts[0].new_page()
+    start.on("pageerror", lambda error: errors.append(f"labels: {error}"))
+    start.goto(profile_url)
+    start.locator('[data-testid="stApp"]').wait_for()
+    start.wait_for_timeout(1500)
+    seen = start.evaluate(_BUTTONS_SEEN)
+    ok("the start screen: every button bold, its line 2 px", all_bold(seen) and all(b["border"] == 2 for b in seen) and len(seen) == 2, seen)
+    shot(start, "19-buttons-start.png")
+    start.close()
+
+    host, viewer = connected(contexts[0], "LINES", True), connected(contexts[1], "LINES", False)
+    for who, page in (("the host's page", host), ("a viewer's page", viewer)):
+        seen = page.evaluate(_BUTTONS_SEEN)
+        ok(f"{who}: every button bold, its line 2 px", all_bold(seen) and all(math.isclose(b["border"], 2, abs_tol=0.3) for b in seen), seen)
+    labels = {b["label"] for b in host.evaluate(_BUTTONS_SEEN)}
+    ok("the host's page has them all", {"Start", "Stop", "Reset", "Copy Link", "Leave Session", "Buzz", "H:MM:SS", "MMM.M"} <= labels, sorted(labels))
+    labels = {b["label"] for b in viewer.evaluate(_BUTTONS_SEEN)}
+    ok("a viewer's page has them all", {"Leave Session", "H:MM:SS", "MMM.M", "Day", "Night"} <= labels, sorted(labels))
+    shot(host, "20-buttons-host.png")
+
+    with host.context.expect_page(timeout=5000) as popped:
+        on_clock(host, _CLICK_POP)
+    pip = popped.value
+    pip.on("pageerror", lambda error: errors.append(f"labels, its window: {error}"))
+    host.wait_for_timeout(1000)
+    seen = pip.evaluate(_BUTTONS_SEEN)
+    ok("the host's line in its window: every button bold, its line 2 px", all_bold(seen) and all(b["border"] == 2 for b in seen)
+       and {"Start", "Stop", "Reset", "Buzz"} <= {b["label"] for b in seen}, seen)
+    shot(pip, "21-buttons-line.png")
+    pip.close()
+    for context in contexts:
+        context.close()
+
+    # A page fitted to its window, as drawn: Chrome rounds a border down to whole pixels after zoom, so without the scales
+    # undone, or with exactly 2 px undone, this is 1 px at many sizes. The page's own screenshot says what was drawn.
+    for width, height in ((1545, 784), (1366, 600), (500, 400)):
+        context = browser.new_context(viewport={"width": width, "height": height})
+        page = connected(context, f"LINES{width}", True)
+        page.wait_for_timeout(2500)
+        page_scale, panel_scale = scales(page)
+        seen = _red_run(page, page.locator(".buzzer").bounding_box())
+        ok(f"at {width} by {height} (page {page_scale}, panel {panel_scale}): Buzz's line drawn at 2 px", seen == 2, seen)
         context.close()
 
 

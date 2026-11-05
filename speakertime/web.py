@@ -66,7 +66,9 @@ session without leaving a maximized window on a single monitor (``_PIP_HTML``,
 A link that connects by itself (Terry, 2026-11-03, v1.15)
 ---------------------------------------------------------
 A page whose address says ``?session=ROOM5`` connects as Connect to Session
-does, at the visit's start (``session_asked``). Leave Session and Cancel take it
+does, at the visit's start (``session_asked``). With ``?silent`` too, the two
+are joined by ``&``, or by a second ``?``, which a browser does not divide at
+(``_switches``; Terry, 2026-11-05). Leave Session and Cancel take the session
 out of the address, so that a reload does not go back. The host's Copy Link
 (Terry, 2026-11-04, v1.16) puts that address on the clipboard, from the page's
 script (``copyLink``), never with this page's ``?silent``.
@@ -345,6 +347,8 @@ _SILENT_TEXT = "(silent)"
 """After the role on a page whose address says silent, so that its silence is not taken for a fault (Terry, 2026-11-03: this short)."""
 _SESSION_SWITCH = "session"
 """The word in a page's address that connects it to a session by itself: ``?session=ROOM5`` (Terry, 2026-11-03)."""
+_SWITCH_BREAK = re.compile(r"[?;]")
+"""What may stand between two switches in a page's address besides ``&`` (``_switches``)."""
 _START = "Start"
 _RESTART = "Restart"
 """The Start button's label once the timer has run (Elapsed not zero), running or stopped: Start goes on from there."""
@@ -356,8 +360,14 @@ _COPY_SHOWN_MS = 1500
 """What the Copy Link button says after a press, for this long."""
 _BUTTON_RED = "#ff4b4b"
 """Start's, Restart's and Stop's background while they would do something, on the page and the host's line in a pop-out or pop-up: Streamlit's primary colour, which the page's Start has."""
-_BUTTON_TEXT = "#000000"
-"""The text on a button with a colour of its own: Leave Session, and Start, Restart and Stop while they would do something (Terry, 2026-11-04)."""
+_BUTTON_RED_TEXT = "#ffffff"
+"""The text on _BUTTON_RED (Terry, 2026-11-05: white, having tried black in v1.19)."""
+_LEAVE_TEXT = "#000000"
+"""The text on Leave Session's orange (Terry, 2026-11-04)."""
+_BUTTON_BORDER_PX = 2
+"""The line around a button as drawn, on the page and in a pop-out or pop-up: twice what it was (Terry, 2026-11-05: "A bit hard to see at times")."""
+_BUTTON_BORDER_DRAWN = _BUTTON_BORDER_PX + 0.2
+"""The same where a scale is undone: measured at 120 scales, exactly 2 was drawn at 1 px at about one in six, the sum falling just short, and a browser rounds a border down."""
 _POP_CONTROLS = {"start": _START, "stop": "Stop", "reset": "Reset"}
 """The timer's buttons on the host's line in a pop-out or pop-up, by what each asks ``sessions.Registry.control`` to do."""
 
@@ -490,14 +500,14 @@ _PIP_CSS = f"""
   {_SHARED_CSS}
   .pair .cell + .cell {{ margin-left: 44px; }}
   .bar {{ display: flex; align-items: center; gap: 8px; width: max-content; margin: 4px auto 0; white-space: nowrap; }}
-  .modes, .daynight {{ display: flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }}
-  .modes button, .daynight button {{ font: inherit; font-size: 14px; color: var(--text); background: transparent; border: 0;
+  .modes, .daynight {{ display: flex; border: {_BUTTON_BORDER_PX}px solid var(--line); border-radius: 8px; overflow: hidden; }}
+  .modes button, .daynight button {{ font: inherit; font-size: 14px; font-weight: 700; color: var(--text); background: transparent; border: 0;
     padding: 4px 10px; cursor: pointer; }}
-  .bar > button {{ font: inherit; font-size: 14px; color: var(--text); background: transparent;
-    border: 1px solid var(--line); border-radius: 8px; padding: 4px 12px; cursor: pointer; }}
+  .bar > button {{ font: inherit; font-size: 14px; font-weight: 700; color: var(--text); background: transparent;
+    border: {_BUTTON_BORDER_PX}px solid var(--line); border-radius: 8px; padding: 4px 12px; cursor: pointer; }}
   .bar > button:disabled {{ opacity: 0.35; cursor: default; }}
-  .bar > [data-a="start"]:enabled, .bar > [data-a="stop"]:enabled {{ background: {_BUTTON_RED}; border-color: {_BUTTON_RED}; color: {_BUTTON_TEXT}; }}
-  .bar > .buzz {{ color: var(--over); font-weight: 700; background: var(--panel); border-color: var(--over);
+  .bar > [data-a="start"]:enabled, .bar > [data-a="stop"]:enabled {{ background: {_BUTTON_RED}; border-color: {_BUTTON_RED}; color: {_BUTTON_RED_TEXT}; }}
+  .bar > .buzz {{ color: var(--over); background: var(--panel); border-color: var(--over);
     touch-action: none; user-select: none; -webkit-user-select: none; }}
   .bar > .buzz.on {{ background: var(--over); color: var(--panel); }}
   .bar > [data-a="start"]::before {{ content: "{_RESTART}"; display: block; height: 0; overflow: hidden; visibility: hidden; }}
@@ -1072,6 +1082,10 @@ _CLOCK_CSS = f"""
 .clock {{
   {_LOOK_CSS}
   zoom: var(--speakertime-panel, 1);
+  /* A button's line as drawn, the page's and the panel's scales undone: Chrome rounds a border down to whole pixels
+     after zoom, so a plain 2 px on a panel at 0.48 is drawn at 1 px, no thicker than 1 px was. A little over the
+     figure (_BUTTON_BORDER_DRAWN), since the sum can come to 1.99, which would be rounded down to 1. */
+  --button-border: calc({_BUTTON_BORDER_DRAWN}px / (var(--speakertime-page, 1) * var(--speakertime-panel, 1)));
   border-radius: 14px; padding: 14px {_PANEL_PAD_PX}px 12px; box-shadow: inset 0 0 0 1px var(--line);
   box-sizing: border-box; width: max-content; min-width: min(100%, {_PANEL_MIN_PX}px); margin: 0 auto;
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
@@ -1106,16 +1120,16 @@ _CLOCK_CSS = f"""
 {_SHARED_CSS}
 .tools {{ display: flex; justify-content: center; align-items: center; flex-wrap: wrap; gap: 8px 12px; margin-top: 4px;
   contain: inline-size; }}
-.modes, .daynight {{ display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }}
-.modes button, .daynight button {{ font: inherit; font-size: 14px; color: var(--text); background: transparent; border: 0;
+.modes, .daynight {{ display: inline-flex; border: var(--button-border) solid var(--line); border-radius: 8px; overflow: hidden; }}
+.modes button, .daynight button {{ font: inherit; font-size: 14px; font-weight: 700; color: var(--text); background: transparent; border: 0;
   padding: 4px 10px; cursor: pointer; }}
 .pop, .buzzer {{
-  font: inherit; font-size: 14px; color: var(--text); background: transparent;
-  border: 1px solid var(--line); border-radius: 8px; padding: 4px 12px; cursor: pointer;
+  font: inherit; font-size: 14px; font-weight: 700; color: var(--text); background: transparent;
+  border: var(--button-border) solid var(--line); border-radius: 8px; padding: 4px 12px; cursor: pointer;
 }}
 .pop:hover {{ border-color: var(--text); }}
-/* Red and bold on the panel's own background, Day or Night, the two swapped while held (Terry, 2026-11-04). */
-.buzzer {{ color: var(--over); font-weight: 700; background: var(--panel); border-color: var(--over);
+/* Red on the panel's own background, Day or Night, the two swapped while held (Terry, 2026-11-04). */
+.buzzer {{ color: var(--over); background: var(--panel); border-color: var(--over);
   touch-action: none; user-select: none; -webkit-user-select: none; }}
 .buzzer.on {{ background: var(--over); color: var(--panel); }}
 .note, .why, .buzz-note {{ font-size: 13px; text-align: center; margin-top: 6px; contain: inline-size; }}
@@ -1849,14 +1863,21 @@ _PAGE_STYLE = """
 /* Leave Session black on orange (Terry, 2026-11-04), whatever the pointer is doing; Streamlit's own rules for a
    hover or the focus would turn its text red, so these must win over them. */
 .st-key-{_LEAVE_BUTTON} button {{
-  background: {CLOCK_COLOURS["orange"]} !important; border-color: {CLOCK_COLOURS["orange"]} !important; color: {_BUTTON_TEXT} !important;
+  background: {CLOCK_COLOURS["orange"]} !important; border-color: {CLOCK_COLOURS["orange"]} !important; color: {_LEAVE_TEXT} !important;
 }}
 .st-key-{_LEAVE_BUTTON} button:hover {{ filter: brightness(0.93); }}
-/* Start, Restart and Stop black on red while they would do something, greyed by Streamlit otherwise (Terry, 2026-11-04). */
+/* Start, Restart and Stop white on red while they would do something (Terry, 2026-11-05), greyed by Streamlit otherwise. */
 .st-key-{_START_BUTTON} button:enabled, .st-key-{_STOP_BUTTON} button:enabled {{
-  background: {_BUTTON_RED} !important; border-color: {_BUTTON_RED} !important; color: {_BUTTON_TEXT} !important;
+  background: {_BUTTON_RED} !important; border-color: {_BUTTON_RED} !important; color: {_BUTTON_RED_TEXT} !important;
 }}
 .st-key-{_START_BUTTON} button:enabled:hover, .st-key-{_STOP_BUTTON} button:enabled:hover {{ filter: brightness(0.93); }}
+/* Every button's label bold, and the line around it twice as thick (Terry, 2026-11-05); on a page fitted to its window
+   the column's scale is undone, as the panel's buttons' is (--button-border), or Chrome draws the line at 1 px. */
+[data-testid="stButton"] button {{ border-width: {_BUTTON_BORDER_PX}px !important; }}
+[data-testid="stButton"] button p {{ font-weight: 700 !important; }}
+[data-testid="stMainBlockContainer"] > [data-testid="stVerticalBlock"]:has(> .st-key-clock) [data-testid="stButton"] button {{
+  border-width: calc({_BUTTON_BORDER_DRAWN}px / var(--speakertime-page, 1)) !important;
+}}
 </style>
 """
 
@@ -1885,7 +1906,7 @@ _PICKER_HTML = '<div class="picks" role="group" aria-label="Colour of the Time L
 _PICKER_CSS = """
 .picks { display: flex; align-items: center; gap: 7px; height: 2.5rem; }
 .picks button { width: 22px; height: 22px; padding: 0; border-radius: 50%; cursor: pointer; background: var(--swatch);
-  border: 1px solid #9ca3af; font: 600 11px system-ui, sans-serif; color: #000; }
+  border: 1px solid #9ca3af; font: 700 11px system-ui, sans-serif; color: #000; }
 .picks button.on { outline: 2px solid #31333f; outline-offset: 2px; }
 """
 _PICKER_JS = """
@@ -1958,21 +1979,39 @@ def _is_switch(name: str, switch: str) -> bool:
     return name.lstrip("-").casefold() == switch
 
 
+def _switches(params: Mapping[str, str]) -> list[tuple[str, str]]:
+    """A page's address (its query parameters, ``params``) as its switches, name and value, with a ``?`` or a ``;`` between two of them read as ``&``.
+
+    A browser and Streamlit break an address only at ``&``. Only the first ``?`` means anything to them, so
+    ``?session=ROOM5?silent`` arrives as a session called ``ROOM5?silent``, which reads as ROOM5SILENT, and
+    ``?silent?session=ROOM5`` as one switch called ``silent?session``. Neither character can be in an ID (``ids``),
+    so here they can only have been meant to divide switches (Terry, 2026-11-05).
+    """
+    found = []
+    for name, value in params.items():
+        for piece in _SWITCH_BREAK.split(f"{name}={value}"):
+            own_name, _, own_value = piece.strip().partition("=")
+            if own_name:
+                found.append((own_name, own_value))
+    return found
+
+
 def silent_asked(params: Mapping[str, str]) -> bool:
     """Whether a page's address (its query parameters, ``params``) says it makes no sound: the switch by itself or with any value but a no."""
-    return any(_is_switch(name, _SILENT_SWITCH) and value.casefold() not in _SILENT_OFF for name, value in params.items())
+    return any(_is_switch(name, _SILENT_SWITCH) and value.casefold() not in _SILENT_OFF for name, value in _switches(params))
 
 
 def session_asked(params: Mapping[str, str]) -> str | None:
     """The session a page's address (its query parameters, ``params``) connects it to, as written; None for none, or a blank one."""
-    return next((value for name, value in params.items() if _is_switch(name, _SESSION_SWITCH) and value.strip()), None)
+    return next((value for name, value in _switches(params) if _is_switch(name, _SESSION_SWITCH) and value.strip()), None)
 
 
 def _forget_link() -> None:
-    """Take the session out of the page's address, the rest of it kept: the page has left it, so a reload is not to go back."""
-    for name in list(st.query_params):
-        if _is_switch(name, _SESSION_SWITCH):
-            del st.query_params[name]
+    """Take the session out of the page's address, the rest of it kept: the page has left it, so a reload is not to go back.
+
+    Written back whole, as a ``?silent`` may have arrived inside the session's value (``_switches``).
+    """
+    st.query_params.from_dict({name: value for name, value in _switches(st.query_params) if not _is_switch(name, _SESSION_SWITCH)})
 
 
 def _notify(kind: str, text: str) -> None:

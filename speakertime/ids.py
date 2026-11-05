@@ -10,7 +10,13 @@ one of ``ALLOWED_SPECIALS`` is left out: spaces, tabs, quotes, backslashes,
 angle brackets, ``$``, ``%``, ``;``, ``,`` and the rest. The ones left out are
 those that mean something to a web page, a cookie or the page's text
 (Markdown takes two ``$`` for a formula), or that look alike when read aloud
-or typed on a phone. "Room #5", "room#5" and "ROOM #5" are all one session.
+or typed on a phone. "Room 5", "room5" and "ROOM 5" are all one session.
+
+Every character that divides or ends something in a page's address is among
+those left out (``?``, ``&``, ``=``, ``#``, ``;``, ``%``, ``+``), so that an ID can
+be written in a link as it stands (Terry, 2026-11-05). ``#``, ``&`` and ``+`` were
+kept until v1.19; written in a link by hand they changed what it said:
+``?session=ROOM#5`` reaches the program as ROOM, whatever the box would make of it.
 """
 
 from __future__ import annotations
@@ -22,8 +28,8 @@ from collections.abc import Callable
 MAX_LENGTH = 20
 """The longest ID, counted after it is read (spaces and the characters left out do not count)."""
 
-ALLOWED_SPECIALS = "-_.#@+&"
-"""The special characters kept in an ID. Each is safe in every place an ID goes once encoded, and easy to say."""
+ALLOWED_SPECIALS = "-_.@"
+"""The special characters kept in an ID. Each is safe in every place an ID goes, a link written by hand too, and easy to say."""
 
 MAX_TYPED = 60
 """The most the box takes, spaces and all: room for a spaced-out ID of MAX_LENGTH, and a stop to a paste of a whole page."""
