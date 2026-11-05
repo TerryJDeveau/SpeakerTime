@@ -13,7 +13,8 @@ minutes, to one decimal place (2.5 is two and a half minutes), and use
 the timer too). Once the timer has run, Start reads **Restart**, greyed while
 running, and goes on from where it stopped; after Reset it reads Start
 again (v1.11). Start or Restart while stopped, and Stop while running, are
-black on red; each is greyed otherwise (v1.19). Time Remaining is the Time Limit minus
+white on red (v1.20); each is greyed otherwise. Every button's label is bold and
+the line around it 2 px, on the page and in a pop-out or pop-up (v1.20). Time Remaining is the Time Limit minus
 Elapsed Time. It turns red and blinks when it reaches zero, and once the limit
 is passed it goes negative and its label reads **Overtime**, red and blinking
 too; with a blank, 0 or negative limit it stays at zero (and plain), and a box
@@ -85,7 +86,7 @@ Remaining's on the colour wheel (the **A** button); the four buttons after it
 are other colours to choose instead.
 
 **Buzz** (v1.10): on the host's panel, beside Pop out, and on the host's
-pop-out or pop-up, bold red on the panel's own background, the two swapped
+pop-out or pop-up, red on the panel's own background, the two swapped
 while it is held (v1.19). While the host
 holds it down (the mouse button, a finger, or Space or Enter on it), Time
 Remaining reads **BUZZ** in steady red on every panel and pop-out, the

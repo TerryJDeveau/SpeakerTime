@@ -360,8 +360,14 @@ _COPY_SHOWN_MS = 1500
 """What the Copy Link button says after a press, for this long."""
 _BUTTON_RED = "#ff4b4b"
 """Start's, Restart's and Stop's background while they would do something, on the page and the host's line in a pop-out or pop-up: Streamlit's primary colour, which the page's Start has."""
-_BUTTON_TEXT = "#000000"
-"""The text on a button with a colour of its own: Leave Session, and Start, Restart and Stop while they would do something (Terry, 2026-11-04)."""
+_BUTTON_RED_TEXT = "#ffffff"
+"""The text on _BUTTON_RED (Terry, 2026-11-05: white, having tried black in v1.19)."""
+_LEAVE_TEXT = "#000000"
+"""The text on Leave Session's orange (Terry, 2026-11-04)."""
+_BUTTON_BORDER_PX = 2
+"""The line around a button as drawn, on the page and in a pop-out or pop-up: twice what it was (Terry, 2026-11-05: "A bit hard to see at times")."""
+_BUTTON_BORDER_DRAWN = _BUTTON_BORDER_PX + 0.2
+"""The same where a scale is undone: measured at 120 scales, exactly 2 was drawn at 1 px at about one in six, the sum falling just short, and a browser rounds a border down."""
 _POP_CONTROLS = {"start": _START, "stop": "Stop", "reset": "Reset"}
 """The timer's buttons on the host's line in a pop-out or pop-up, by what each asks ``sessions.Registry.control`` to do."""
 
@@ -494,14 +500,14 @@ _PIP_CSS = f"""
   {_SHARED_CSS}
   .pair .cell + .cell {{ margin-left: 44px; }}
   .bar {{ display: flex; align-items: center; gap: 8px; width: max-content; margin: 4px auto 0; white-space: nowrap; }}
-  .modes, .daynight {{ display: flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }}
-  .modes button, .daynight button {{ font: inherit; font-size: 14px; color: var(--text); background: transparent; border: 0;
+  .modes, .daynight {{ display: flex; border: {_BUTTON_BORDER_PX}px solid var(--line); border-radius: 8px; overflow: hidden; }}
+  .modes button, .daynight button {{ font: inherit; font-size: 14px; font-weight: 700; color: var(--text); background: transparent; border: 0;
     padding: 4px 10px; cursor: pointer; }}
-  .bar > button {{ font: inherit; font-size: 14px; color: var(--text); background: transparent;
-    border: 1px solid var(--line); border-radius: 8px; padding: 4px 12px; cursor: pointer; }}
+  .bar > button {{ font: inherit; font-size: 14px; font-weight: 700; color: var(--text); background: transparent;
+    border: {_BUTTON_BORDER_PX}px solid var(--line); border-radius: 8px; padding: 4px 12px; cursor: pointer; }}
   .bar > button:disabled {{ opacity: 0.35; cursor: default; }}
-  .bar > [data-a="start"]:enabled, .bar > [data-a="stop"]:enabled {{ background: {_BUTTON_RED}; border-color: {_BUTTON_RED}; color: {_BUTTON_TEXT}; }}
-  .bar > .buzz {{ color: var(--over); font-weight: 700; background: var(--panel); border-color: var(--over);
+  .bar > [data-a="start"]:enabled, .bar > [data-a="stop"]:enabled {{ background: {_BUTTON_RED}; border-color: {_BUTTON_RED}; color: {_BUTTON_RED_TEXT}; }}
+  .bar > .buzz {{ color: var(--over); background: var(--panel); border-color: var(--over);
     touch-action: none; user-select: none; -webkit-user-select: none; }}
   .bar > .buzz.on {{ background: var(--over); color: var(--panel); }}
   .bar > [data-a="start"]::before {{ content: "{_RESTART}"; display: block; height: 0; overflow: hidden; visibility: hidden; }}
@@ -1076,6 +1082,10 @@ _CLOCK_CSS = f"""
 .clock {{
   {_LOOK_CSS}
   zoom: var(--speakertime-panel, 1);
+  /* A button's line as drawn, the page's and the panel's scales undone: Chrome rounds a border down to whole pixels
+     after zoom, so a plain 2 px on a panel at 0.48 is drawn at 1 px, no thicker than 1 px was. A little over the
+     figure (_BUTTON_BORDER_DRAWN), since the sum can come to 1.99, which would be rounded down to 1. */
+  --button-border: calc({_BUTTON_BORDER_DRAWN}px / (var(--speakertime-page, 1) * var(--speakertime-panel, 1)));
   border-radius: 14px; padding: 14px {_PANEL_PAD_PX}px 12px; box-shadow: inset 0 0 0 1px var(--line);
   box-sizing: border-box; width: max-content; min-width: min(100%, {_PANEL_MIN_PX}px); margin: 0 auto;
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
@@ -1110,16 +1120,16 @@ _CLOCK_CSS = f"""
 {_SHARED_CSS}
 .tools {{ display: flex; justify-content: center; align-items: center; flex-wrap: wrap; gap: 8px 12px; margin-top: 4px;
   contain: inline-size; }}
-.modes, .daynight {{ display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }}
-.modes button, .daynight button {{ font: inherit; font-size: 14px; color: var(--text); background: transparent; border: 0;
+.modes, .daynight {{ display: inline-flex; border: var(--button-border) solid var(--line); border-radius: 8px; overflow: hidden; }}
+.modes button, .daynight button {{ font: inherit; font-size: 14px; font-weight: 700; color: var(--text); background: transparent; border: 0;
   padding: 4px 10px; cursor: pointer; }}
 .pop, .buzzer {{
-  font: inherit; font-size: 14px; color: var(--text); background: transparent;
-  border: 1px solid var(--line); border-radius: 8px; padding: 4px 12px; cursor: pointer;
+  font: inherit; font-size: 14px; font-weight: 700; color: var(--text); background: transparent;
+  border: var(--button-border) solid var(--line); border-radius: 8px; padding: 4px 12px; cursor: pointer;
 }}
 .pop:hover {{ border-color: var(--text); }}
-/* Red and bold on the panel's own background, Day or Night, the two swapped while held (Terry, 2026-11-04). */
-.buzzer {{ color: var(--over); font-weight: 700; background: var(--panel); border-color: var(--over);
+/* Red on the panel's own background, Day or Night, the two swapped while held (Terry, 2026-11-04). */
+.buzzer {{ color: var(--over); background: var(--panel); border-color: var(--over);
   touch-action: none; user-select: none; -webkit-user-select: none; }}
 .buzzer.on {{ background: var(--over); color: var(--panel); }}
 .note, .why, .buzz-note {{ font-size: 13px; text-align: center; margin-top: 6px; contain: inline-size; }}
@@ -1853,14 +1863,21 @@ _PAGE_STYLE = """
 /* Leave Session black on orange (Terry, 2026-11-04), whatever the pointer is doing; Streamlit's own rules for a
    hover or the focus would turn its text red, so these must win over them. */
 .st-key-{_LEAVE_BUTTON} button {{
-  background: {CLOCK_COLOURS["orange"]} !important; border-color: {CLOCK_COLOURS["orange"]} !important; color: {_BUTTON_TEXT} !important;
+  background: {CLOCK_COLOURS["orange"]} !important; border-color: {CLOCK_COLOURS["orange"]} !important; color: {_LEAVE_TEXT} !important;
 }}
 .st-key-{_LEAVE_BUTTON} button:hover {{ filter: brightness(0.93); }}
-/* Start, Restart and Stop black on red while they would do something, greyed by Streamlit otherwise (Terry, 2026-11-04). */
+/* Start, Restart and Stop white on red while they would do something (Terry, 2026-11-05), greyed by Streamlit otherwise. */
 .st-key-{_START_BUTTON} button:enabled, .st-key-{_STOP_BUTTON} button:enabled {{
-  background: {_BUTTON_RED} !important; border-color: {_BUTTON_RED} !important; color: {_BUTTON_TEXT} !important;
+  background: {_BUTTON_RED} !important; border-color: {_BUTTON_RED} !important; color: {_BUTTON_RED_TEXT} !important;
 }}
 .st-key-{_START_BUTTON} button:enabled:hover, .st-key-{_STOP_BUTTON} button:enabled:hover {{ filter: brightness(0.93); }}
+/* Every button's label bold, and the line around it twice as thick (Terry, 2026-11-05); on a page fitted to its window
+   the column's scale is undone, as the panel's buttons' is (--button-border), or Chrome draws the line at 1 px. */
+[data-testid="stButton"] button {{ border-width: {_BUTTON_BORDER_PX}px !important; }}
+[data-testid="stButton"] button p {{ font-weight: 700 !important; }}
+[data-testid="stMainBlockContainer"] > [data-testid="stVerticalBlock"]:has(> .st-key-clock) [data-testid="stButton"] button {{
+  border-width: calc({_BUTTON_BORDER_DRAWN}px / var(--speakertime-page, 1)) !important;
+}}
 </style>
 """
 
@@ -1889,7 +1906,7 @@ _PICKER_HTML = '<div class="picks" role="group" aria-label="Colour of the Time L
 _PICKER_CSS = """
 .picks { display: flex; align-items: center; gap: 7px; height: 2.5rem; }
 .picks button { width: 22px; height: 22px; padding: 0; border-radius: 50%; cursor: pointer; background: var(--swatch);
-  border: 1px solid #9ca3af; font: 600 11px system-ui, sans-serif; color: #000; }
+  border: 1px solid #9ca3af; font: 700 11px system-ui, sans-serif; color: #000; }
 .picks button.on { outline: 2px solid #31333f; outline-offset: 2px; }
 """
 _PICKER_JS = """
