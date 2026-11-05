@@ -66,7 +66,9 @@ session without leaving a maximized window on a single monitor (``_PIP_HTML``,
 A link that connects by itself (Terry, 2026-11-03, v1.15)
 ---------------------------------------------------------
 A page whose address says ``?session=ROOM5`` connects as Connect to Session
-does, at the visit's start (``session_asked``). Leave Session and Cancel take it
+does, at the visit's start (``session_asked``). With ``?silent`` too, the two
+are joined by ``&``, or by a second ``?``, which a browser does not divide at
+(``_switches``; Terry, 2026-11-05). Leave Session and Cancel take the session
 out of the address, so that a reload does not go back. The host's Copy Link
 (Terry, 2026-11-04, v1.16) puts that address on the clipboard, from the page's
 script (``copyLink``), never with this page's ``?silent``.
@@ -345,6 +347,8 @@ _SILENT_TEXT = "(silent)"
 """After the role on a page whose address says silent, so that its silence is not taken for a fault (Terry, 2026-11-03: this short)."""
 _SESSION_SWITCH = "session"
 """The word in a page's address that connects it to a session by itself: ``?session=ROOM5`` (Terry, 2026-11-03)."""
+_SWITCH_BREAK = re.compile(r"[?;]")
+"""What may stand between two switches in a page's address besides ``&`` (``_switches``)."""
 _START = "Start"
 _RESTART = "Restart"
 """The Start button's label once the timer has run (Elapsed not zero), running or stopped: Start goes on from there."""
@@ -1958,21 +1962,39 @@ def _is_switch(name: str, switch: str) -> bool:
     return name.lstrip("-").casefold() == switch
 
 
+def _switches(params: Mapping[str, str]) -> list[tuple[str, str]]:
+    """A page's address (its query parameters, ``params``) as its switches, name and value, with a ``?`` or a ``;`` between two of them read as ``&``.
+
+    A browser and Streamlit break an address only at ``&``. Only the first ``?`` means anything to them, so
+    ``?session=ROOM5?silent`` arrives as a session called ``ROOM5?silent``, which reads as ROOM5SILENT, and
+    ``?silent?session=ROOM5`` as one switch called ``silent?session``. Neither character can be in an ID (``ids``),
+    so here they can only have been meant to divide switches (Terry, 2026-11-05).
+    """
+    found = []
+    for name, value in params.items():
+        for piece in _SWITCH_BREAK.split(f"{name}={value}"):
+            own_name, _, own_value = piece.strip().partition("=")
+            if own_name:
+                found.append((own_name, own_value))
+    return found
+
+
 def silent_asked(params: Mapping[str, str]) -> bool:
     """Whether a page's address (its query parameters, ``params``) says it makes no sound: the switch by itself or with any value but a no."""
-    return any(_is_switch(name, _SILENT_SWITCH) and value.casefold() not in _SILENT_OFF for name, value in params.items())
+    return any(_is_switch(name, _SILENT_SWITCH) and value.casefold() not in _SILENT_OFF for name, value in _switches(params))
 
 
 def session_asked(params: Mapping[str, str]) -> str | None:
     """The session a page's address (its query parameters, ``params``) connects it to, as written; None for none, or a blank one."""
-    return next((value for name, value in params.items() if _is_switch(name, _SESSION_SWITCH) and value.strip()), None)
+    return next((value for name, value in _switches(params) if _is_switch(name, _SESSION_SWITCH) and value.strip()), None)
 
 
 def _forget_link() -> None:
-    """Take the session out of the page's address, the rest of it kept: the page has left it, so a reload is not to go back."""
-    for name in list(st.query_params):
-        if _is_switch(name, _SESSION_SWITCH):
-            del st.query_params[name]
+    """Take the session out of the page's address, the rest of it kept: the page has left it, so a reload is not to go back.
+
+    Written back whole, as a ``?silent`` may have arrived inside the session's value (``_switches``).
+    """
+    st.query_params.from_dict({name: value for name, value in _switches(st.query_params) if not _is_switch(name, _SESSION_SWITCH)})
 
 
 def _notify(kind: str, text: str) -> None:

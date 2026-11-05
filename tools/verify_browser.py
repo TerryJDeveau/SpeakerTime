@@ -1408,6 +1408,29 @@ def join_link(browser, errors: list[str]) -> None:
     ok("and a reload stays on the start screen", "You are viewing it." not in main_text(linked), main_text(linked)[:80])
     linked.context.close()
 
+    # A second ? or a ; for the & (Terry, 2026-11-05): only & divides for a browser, so ?session=X?silent arrives as one
+    # value. Each is read as two switches, not as a session called NOVEMBERSILENT.
+    for address in ("?silent&session=NOVEMBER", "?session=NOVEMBER?silent", "?silent?session=NOVEMBER", "?session=NOVEMBER;silent", "?session=NOVEMBER?-silent"):
+        page = opened(address)
+        page.get_by_text("You are viewing it.").wait_for(timeout=10000)
+        seen = main_text(page)
+        ok(f"{address}: that session, and silent", "Session ID: NOVEMBER" in seen and _SILENT_TEXT in seen, seen[:80])
+        page.context.close()
+    # The ones a browser takes itself: # ends the query, + reads as a space; encoded, as v1.19's Copy Link wrote them: left out as the box leaves them out.
+    for address in ("?session=NOVEMBER#5", "?session=NOV+EMBER", "?session=NOV%26EM%23B%2BER"):
+        page = opened(address)
+        page.get_by_text("You are viewing it.").wait_for(timeout=10000)
+        seen = main_text(page)
+        ok(f"{address}: session NOVEMBER, not silent", "Session ID: NOVEMBER" in seen and _SILENT_TEXT not in seen, seen[:80])
+        page.context.close()
+    linked = opened("?session=NOVEMBER?silent")
+    linked.get_by_text("You are viewing it.").wait_for(timeout=10000)
+    button(linked, "Leave Session").click()
+    button(linked, "Connect to Session").wait_for()
+    settled(lambda: "session=" in linked.url, False, 3.0)
+    ok("Leave Session after ?session=ID?silent: the session out of the address, the switch kept", "session=" not in linked.url and "silent" in linked.url, linked.url)
+    linked.context.close()
+
     # The host's own browser, its host's page open: the link makes a viewer; no second host.
     own = opened("?session=NOVEMBER", host.context)
     own.get_by_text("You are viewing it.").wait_for(timeout=10000)
