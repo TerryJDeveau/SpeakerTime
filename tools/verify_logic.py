@@ -112,8 +112,8 @@ def timer_checks() -> None:
 
 def id_checks() -> None:
     for typed, expected in [
-        ("room 5b", "ROOM5B"), ("Room\t#5", "ROOM#5"), ("  abc  ", "ABC"), ("Café", "CAFE"), ("straße", "STRASSE"),
-        ("ＡＢＣ１", "ABC1"), ("a-b_c.d#e@f+g&h", "A-B_C.D#E@F+G&H"), ("x$y%z;w,v'u\"t<s>r\\q/p", "XYZWVUTSRQP"),
+        ("room 5b", "ROOM5B"), ("Room\t#5", "ROOM5"), ("  abc  ", "ABC"), ("Café", "CAFE"), ("straße", "STRASSE"),
+        ("ＡＢＣ１", "ABC1"), ("a-b_c.d@e", "A-B_C.D@E"), ("a?b&c=d#e;f%g+h", "ABCDEFGH"), ("x$y%z;w,v'u\"t<s>r\\q/p", "XYZWVUTSRQP"),
         ("", ""), ("!!!", ""),
     ]:
         check(f"normalized({typed!r})", ids.normalized(typed), expected)

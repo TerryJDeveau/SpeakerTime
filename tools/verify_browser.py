@@ -1666,19 +1666,19 @@ def host_row_and_link(browser, errors: list[str], shot) -> None:
     seen = settled(lambda: on_clipboard(host), f"{base}/?session=TANGO", 3.0)
     ok("with the clipboard's API refused, the older way copies it", seen == f"{base}/?session=TANGO", seen)
 
-    # An ID with Markdown's and an address's characters: encoded, and the link goes there.
+    # An ID typed with an address's characters: they are left out (Terry, 2026-11-05); the @ kept is encoded, and the link goes there.
     special = created(context, "A&B#1+@")
     special.bring_to_front()
     button(special, "Copy Link").click()
-    want = f"{base}/?session=A%26B%231%2B%40"
+    want = f"{base}/?session=AB1%40"
     seen = settled(lambda: on_clipboard(special), want, 3.0)
-    ok("an ID with & # + @: encoded in the link", seen == want, seen)
+    ok("an ID typed with & # + @: read as AB1@, its @ encoded in the link", seen == want, seen)
     other = browser.new_context(viewport={"width": 800, "height": 1000})
     viewer = other.new_page()
     viewer.on("pageerror", lambda error: errors.append(f"copy link, viewer: {error}"))
     viewer.goto(want)
     viewer.get_by_text("You are viewing it.").wait_for(timeout=10000)
-    ok("and that link connects to that session", "A&B#1+@" in main_text(viewer), main_text(viewer)[:120])
+    ok("and that link connects to that session", "AB1@" in main_text(viewer), main_text(viewer)[:120])
     ok("a viewer has Leave Session and no Copy Link", button(viewer, "Leave Session").count() == 1 and button(viewer, "Copy Link").count() == 0)
     other.close()
     context.close()

@@ -128,9 +128,11 @@ session out of the address, so that a reload does not go back.
 link on the clipboard. It holds the session and nothing else, so a host's own
 `?silent` is not passed on.
 
-Session IDs: letters, numbers and the characters `- _ . # @ + &`, at most 20.
+Session IDs: letters, numbers and the characters `- _ . @`, at most 20.
 Spaces, tabs and other characters are ignored, and so is case: "room 5b" and
-"ROOM5B" are the same session.
+"ROOM5B" are the same session. Every character that divides or ends something
+in an address is among those ignored (`#`, `&` and `+` were allowed until v1.19),
+so an ID can be written in a link as it stands.
 
 **If the host's window closes** or loses its connection, the session keeps
 running as if nothing happened. After about 10 seconds every viewer is offered
